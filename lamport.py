@@ -42,9 +42,10 @@ class Keypair:
         return new_pubkey
 
     def tree_node_hash(self):
-         flattened_pubkey = b''.join([b''.join(unitpair) for unitpair in self.public_key])
-         merkel_node_hash = SHA512.new(flattened_pubkey).digest()
-         return merkel_node_hash
+        'Used to generate pubkey hash for Merkle-Tree generation.'
+        flattened_pubkey = b''.join([b''.join(unitpair) for unitpair in self.public_key])
+        merkel_node_hash = SHA512.new(flattened_pubkey).digest()
+        return merkel_node_hash
 
     def export_keypair(self):
         exportable_publickey = self._exportable_key(self.public_key)
@@ -86,7 +87,7 @@ class Keypair:
         elif 'public_key' in available_keys:
             return None, parse_key(keypair['public_key'])
 
-    def verify_private_key(self):
+    def verify_keypair(self):
         def check_key(key):
             if not isinstance(key, list):
                 raise TypeError("Key must be a list.")
@@ -171,7 +172,7 @@ class Verifier:
                    "and generation from private part (if available) "
                    "failed. Cannot be used to verify."))
 
-    def verify_utf8_signature(self, message, utf8sig):
+    def verify_signature(self, message, utf8sig):
         '''Message and utf8sig should be strings. They will be byte-converted
         and passed to the verify_bin_signature method.'''
         return self.verify_bin_signature(bytes(message,'utf-8'), self._parse_utf8_sig(utf8sig))

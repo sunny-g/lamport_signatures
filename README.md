@@ -4,6 +4,10 @@ by Cathal Garvey
 Released under the GNU General Public License 3.0
 A novice's implementation of the Quantum-Computer-Resistant Lamport Signature scheme in Python 3
 
+Dependencies:
+* PyCrypto for Py3k (natively supported in recent versions)
+* Bitarray for Py3k (natively supported in recent versions)
+
 What is this?
 -------------
 ### Lamport Signatures
