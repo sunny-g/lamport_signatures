@@ -4,7 +4,8 @@ Warning: written by an amateur. Use at your own risk!'''
 
 from Crypto import Random
 from Crypto.Hash import SHA512
-import bitarray
+#import bitarray
+import bitstring
 import base64
 import json
 
@@ -55,10 +56,10 @@ class Keypair:
         return json.dumps(b64keypair)
 
     def export_public_key(self):
-        return json.dumps(self._exportable_key(self.public_key))
+        return json.dumps({'public_key':self._exportable_key(self.public_key)})
 
     def export_private_key(self):
-        return json.dumps(self._exportable_key(self.private_key))
+        return json.dumps({'private_key':self._exportable_key(self.private_key)})
 
     def _exportable_key(self, key=None):
         if key is None: key= self.public_key
@@ -144,7 +145,7 @@ class Signer:
         for bit in bithash:
             private_numbers_for_bit = self.keypair.private_key[counter]
             # Below: if bit is true, int(bit) is 1, if False, 0.
-            Revealed_Numbers.append(private_numbers_for_bit[int(bit)])
+            Revealed_Numbers.append(private_numbers_for_bit[bit])
             counter += 1
         return Revealed_Numbers
 
@@ -158,11 +159,13 @@ class Signer:
         if not isinstance(message_hash, bytes):
             raise TypeError(("message_hash must be a binary hash, "
                              "as returned by SHA512.digest()"))
-        hash_binary = bitarray.bitarray(endian='big')
-        hash_binary.frombytes(message_hash)
-        if hash_binary.length() != 512:
-            raise ValueError("Message hash must be 512 bits in length.")
-        return hash_binary.tolist()
+      #  hash_binary = bitarray.bitarray(endian='big')
+      #  hash_binary.frombytes(message_hash)
+      #  if hash_binary.length() != 512:
+      #      raise ValueError("Message hash must be 512 bits in length.")
+      #  return hash_binary.tolist()
+        hash_bits = bitstring.BitString(message_hash)
+        return [int(x) for x in list(hash_bits.bin)]
 
 class Verifier:
     def __init__(self, keypair):
@@ -194,7 +197,7 @@ class Verifier:
             public_hashes_for_bit = self.keypair.public_key[counter]
             this_number_hash = SHA512.new(binsig[counter]).digest()
             # Below: int(bit) returns 1 or 0 according to bool value.
-            if this_number_hash != public_hashes_for_bit[int(bit)]:
+            if this_number_hash != public_hashes_for_bit[bit]:
                 # Hash mismatch, signature false.
                 return False
             # Counter should run from 0 to 511
@@ -224,8 +227,26 @@ class Verifier:
         if not isinstance(message_hash, bytes):
             raise TypeError(("message_hash must be a binary hash, "
                              "as returned by SHA512.digest()"))
-        hash_binary = bitarray.bitarray(endian='big')
-        hash_binary.frombytes(message_hash)
-        if hash_binary.length() != 512:
-            raise ValueError("Message hash must be 512 bits in length.")
-        return hash_binary.tolist()
+        hash_bits = bitstring.BitString(message_hash)
+        return [int(x) for x in list(hash_bits.bin)]
+
+def test():
+    mymsg = "This is a secret message!"
+    print("Generating Lamport Keypair..")
+    mykp = Keypair()
+    print("Generating Pubkey..")
+    mypubkey = mykp.export_public_key()
+    print("Initialising Signer and Verifier..")
+    mysigner = Signer(mykp)
+    myverifier = Verifier(Keypair(mypubkey))
+    print("Generating Authentic Signature for message: '{0}'".format(mymsg))
+    mysig = mysigner.generate_signature(mymsg)
+    print("Attempting to Verify Signature:")
+    print("Verification Result:",myverifier.verify_signature(mymsg, mysig))
+    falsemsg = mymsg+" I grant Cathal unlimited right of attourney!"
+    print("Attempting to Verify a Falsified Signature for message: {0}".format(falsemsg))
+    print("Verification Result:",myverifier.verify_signature(falsemsg, mysig))
+    print("Finished!")
+
+if __name__ == "__main__":
+    test()
