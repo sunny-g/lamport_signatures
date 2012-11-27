@@ -2,9 +2,9 @@
 '''An implementation of the Lamport Signature scheme.
 Warning: written by an amateur. Use at your own risk!'''
 
+# Todo: remove the PyCrypto RNG requirement: new SSL RNG in Standard Library?
 from Crypto import Random
-from Crypto.Hash import SHA512
-#import bitarray
+from hashlib import sha512
 import bitstring
 import base64
 import json
@@ -18,7 +18,7 @@ class Keypair:
             self.private_key, self.public_key = self.generate_keypair()
 
     def generate_keypair(self, leaf_hash=True):
-        '''Generates one SHA512 lamport keypair for this object.
+        '''Generates one sha512 lamport keypair for this object.
         Returns private key (list of lists), public key (list of lists).'''
         private_key = []
         public_key = []
@@ -27,7 +27,7 @@ class Keypair:
             # Creates a pair of 512-bit numbers
             private_unit = [RNG.read(64),RNG.read(64)]
             # Creates a pair of 512-bit digests from the above
-            public_unit = [SHA512.new(j).digest() for j in private_unit]
+            public_unit = [sha512(j).digest() for j in private_unit]
             # Adds the numbers and hashes to the end of the growing keys
             private_key.append(private_unit)
             public_key.append(public_unit)
@@ -36,7 +36,7 @@ class Keypair:
     def rebuild_pubkey(self, privkey=None):
         if not privkey: privkey = self.private_key
         def hashpair(pair):
-            return [SHA512.new(pair[0]).digest(), SHA512.new(pair[1]).digest()]
+            return [sha512(pair[0]).digest(), sha512(pair[1]).digest()]
         new_pubkey
         for priv_pair in privkey:
             new_pubkey.append(hashpair(priv_pair))
@@ -45,7 +45,7 @@ class Keypair:
     def tree_node_hash(self):
         'Used to generate pubkey hash for Merkle-Tree generation.'
         flattened_pubkey = b''.join([b''.join(unitpair) for unitpair in self.public_key])
-        merkel_node_hash = SHA512.new(flattened_pubkey).digest()
+        merkel_node_hash = sha512(flattened_pubkey).digest()
         return merkel_node_hash
 
     def export_keypair(self):
@@ -117,6 +117,8 @@ class Keypair:
                 check_key(self.public_key)
             else:
                 self.public_key = self.rebuild_pubkey()
+            print("Private key found. Can sign and verify self-signed messages.")
+            return True
 
 class Signer:
     def __init__(self, keypair):
@@ -152,13 +154,13 @@ class Signer:
     def hash_message(self, message):
         if not isinstance(message, bytes):
             message = bytes(message,'utf-8')
-        return SHA512.new(message).digest()
+        return sha512(message).digest()
 
     def bit_hash(self, message_hash):
         'Returns a list of bools representing the bits of message_hash'
         if not isinstance(message_hash, bytes):
             raise TypeError(("message_hash must be a binary hash, "
-                             "as returned by SHA512.digest()"))
+                             "as returned by sha512.digest()"))
       #  hash_binary = bitarray.bitarray(endian='big')
       #  hash_binary.frombytes(message_hash)
       #  if hash_binary.length() != 512:
@@ -195,7 +197,7 @@ class Verifier:
         counter = 0
         for bit in bithash:
             public_hashes_for_bit = self.keypair.public_key[counter]
-            this_number_hash = SHA512.new(binsig[counter]).digest()
+            this_number_hash = sha512(binsig[counter]).digest()
             # Below: int(bit) returns 1 or 0 according to bool value.
             if this_number_hash != public_hashes_for_bit[bit]:
                 # Hash mismatch, signature false.
@@ -220,13 +222,13 @@ class Verifier:
     def hash_message(self, message):
         if not isinstance(message, bytes):
             message = bytes(message,'utf-8')
-        return SHA512.new(message).digest()
+        return sha512(message).digest()
 
     def bit_hash(self, message_hash):
         'Returns a list of bools representing the bits of message_hash'
         if not isinstance(message_hash, bytes):
             raise TypeError(("message_hash must be a binary hash, "
-                             "as returned by SHA512.digest()"))
+                             "as returned by sha512.digest()"))
         hash_bits = bitstring.BitString(message_hash)
         return [int(x) for x in list(hash_bits.bin)]
 
