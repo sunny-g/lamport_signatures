@@ -33,7 +33,7 @@ class MerkleTree:
             self.generate_keypairs(keynum)
             self.generate_tree()
         else:
-            self.import_tree(Tree)
+            self.import_tree(ExistingTree)
             self.verify_tree()
 
     def generate_keypairs(self, keynum):
@@ -65,15 +65,19 @@ class MerkleTree:
                 # Embed new hash "above" constitutent hashes in new layer:
                 self.hash_tree[tree_depth].append(new_node_hash)
 
-    def export_tree(self):
+    def export_tree(self, passphrase=None):
+        # Desired features include a symmetric encryption function.
         mytree = {'public_keys':self.public_keyring,
                   'private_keys':self.private_keyring,
                   'merkle_tree':self._exportable_tree(),
                   'signatures':self.signatures,
                   'used_keys':self.used_keys}
+        return json.dumps(mytree)
 
     def import_tree(self, tree):
-        pass
+        # Desired features include detecting an encrypted tree
+        #  and prompting for a decryption passphrase.
+        print("Tree import not yet implemented!")
 
     def _exportable_tree(self):
         exportable_tree = []
@@ -85,12 +89,16 @@ class MerkleTree:
         return exportable_tree
 
     def verify_tree(self):
-        pass
+        '''Should verify that all hashes in the tree match up, that
+        numbers of nodes at each level are correct.'''
+        print("Tree verification not yet implemented!")
 
     def tree_public_key(self):
+        'Returns the root node as a base-64 encoded string.'0 
         return str(base64.b64encode(self.root_hash()),'utf-8')
 
     def root_hash(self):
+        'Returns the root node as binary.'
         return self.hash_tree[len(self.hash_tree)-1]
 
     def sign_message(self, message, mark_used=True):
@@ -109,6 +117,19 @@ class MerkleTree:
         public_key = self.public_keyring[counter]
         if mark_used: self.used_keys.append(KeyToUse.tree_node_hash())
         return lamport.Keypair({'public_key':public_key, 'private_key':private_key})
+
+    def fetch_key(self, leaf_hash, key='public_key'):
+        '''For fetching a keypair from the keyring by leaf node hash.
+        By default, seeks/returns the pubkey, but if key is "private_key"
+        then this returns that instead.'''
+        pass
+
+    def mark_key_used(self, leaf_hash, delete_private=True):
+        'Marks a key, specified by leaf_hash, as used. Optionally deletes private key.'
+        # Deleting old private keys is probably good security practice and saves space.
+        # Before deleting private keys, ensure that system is robust at using pubkeys
+        # and doesn't rely on regenerating from private keys.
+        pass
 
     def _is_used(self, leaf_hash):
         if leaf_hash in self.used_keys:

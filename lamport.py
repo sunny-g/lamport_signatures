@@ -3,11 +3,26 @@
 Warning: written by an amateur. Use at your own risk!'''
 
 # Todo: remove the PyCrypto RNG requirement: new SSL RNG in Standard Library?
-from Crypto import Random
-from hashlib import sha512
+import sys
 import bitstring
 import base64
 import json
+from hashlib import sha512
+
+# Import a cryptographically secure random number generator.
+try:
+    # Introduced in Python 3.3 standard library: wraps OpenSSL/libssl
+    from ssl import RAND_bytes as RNG
+except ImportError:
+    try:
+        # Failing that, if PyCrypto is installed, can use that:
+        from Crypto import Random
+        _RNG = Random.new()
+        RNG = _RNG.read
+    except ImportError:
+        # Warn user if no RNG is available for key creation:
+        print("WARNING: No Crypto-Secure Random Number Generator can be found!\r\nWithout 'CSPRNG', signatures can be created and verified with existing keys, but new keys cannot be created.\r\nEither upgrade to Python 3.3, or install PyCrypto for your current platform/python version.")
+        RNG = None
 
 class Keypair:
     def __init__(self, keypair=None):
@@ -22,10 +37,9 @@ class Keypair:
         Returns private key (list of lists), public key (list of lists).'''
         private_key = []
         public_key = []
-        RNG = Random.new()
         for i in range(0,512):
             # Creates a pair of 512-bit numbers
-            private_unit = [RNG.read(64),RNG.read(64)]
+            private_unit = [RNG(64), RNG(64)]
             # Creates a pair of 512-bit digests from the above
             public_unit = [sha512(j).digest() for j in private_unit]
             # Adds the numbers and hashes to the end of the growing keys
