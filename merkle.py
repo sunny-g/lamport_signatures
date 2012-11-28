@@ -29,7 +29,7 @@ class MerkleTree:
         self.hash_tree = [[]]
         self.used_keys = []
         self.signatures = []
-        if not Tree:
+        if not ExistingTree:
             self.generate_keypairs(keynum)
             self.generate_tree()
         else:
@@ -94,7 +94,7 @@ class MerkleTree:
         print("Tree verification not yet implemented!")
 
     def tree_public_key(self):
-        'Returns the root node as a base-64 encoded string.'0 
+        'Returns the root node as a base-64 encoded string.'
         return str(base64.b64encode(self.root_hash()),'utf-8')
 
     def root_hash(self):
