@@ -27,9 +27,16 @@ except ImportError:
         RNG = _RNG.read
         debug_ln("Using PyCrypto module for Random Number Generation.")
     except ImportError:
-        # Warn user if no RNG is available for key creation:
-        print("WARNING: No Crypto-Secure Random Number Generator can be found!\r\nWithout 'CSPRNG', signatures can be created and verified with existing keys, but new keys cannot be created.\r\nEither upgrade to Python 3.3, or install PyCrypto for your current platform/python version.")
-        RNG = None
+        import os
+        if os.name == "posix":
+            import fallback_RNG
+            RNG = fallback_RNG.new()
+            del(os)
+            print("Python Version is less than 3.3, and PyCrypto is not installed. Will use /dev/urandom for random bytes when generating keys.")
+        else:
+            # Warn user if no RNG is available for key creation:
+            print("WARNING: No Crypto-Secure Pseudo-Random Number Generator can be found!\r\nWithout a 'CSPRNG', signatures can be created and verified with existing keys, but new keys cannot be created.\r\nEither upgrade to Python 3.3, or install PyCrypto for your current platform/python version. Alternatively, use this module on a platform providing an OS-level CSPRNG, such as Linux's /dev/urandom.")
+            RNG = None
 
 class Keypair:
     def __init__(self, keypair=None):
