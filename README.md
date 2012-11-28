@@ -5,8 +5,9 @@ Released under the GNU General Public License 3.0
 A novice's implementation of the Quantum-Computer-Resistant Lamport Signature scheme in Python 3
 
 Dependencies:
-* PyCrypto for Py3k (natively supported in recent versions)
-* Bitarray for Py3k (natively supported in recent versions)
+* None if using Python 3.3
+* PyCrypto if using a lesser version of Python: Necessary for its Crypto-Secure Pseudo-Random Number Generator.
+* In the absence of up-to-date python or PyCrypto, lamport.py will attempt to use /dev/urandom if run on Linux, but it is possible that the urandom pool will be exhausted if using to generate many keys (i.e. generating a merkle tree.)
 
 What is this?
 -------------
