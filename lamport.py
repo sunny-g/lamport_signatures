@@ -9,6 +9,7 @@ def debug_ln(debugstr):
 
 # Todo: remove the PyCrypto RNG requirement: new SSL RNG in Standard Library?
 import sys
+import os
 import bitstring
 import base64
 import json
@@ -27,16 +28,13 @@ except ImportError:
         RNG = _RNG.read
         debug_ln("Using PyCrypto module for Random Number Generation.")
     except ImportError:
-        import os
-        if os.name == "posix":
-            import fallback_RNG
-            RNG = fallback_RNG.new()
-            del(os)
-            print("Python Version is less than 3.3, and PyCrypto is not installed. Will use /dev/urandom for random bytes when generating keys.")
+        import fallback_RNG
+        RNG = fallback_RNG.new()
+        if os.name == "nt":
+            winwarning = " On Windows, security workarounds borrowed from PyCrypto have been applied to try and ensure security on a terrible platform. Consider upgrading to Linux or BSD, or installing PyCrypto."
         else:
-            # Warn user if no RNG is available for key creation:
-            print("WARNING: No Crypto-Secure Pseudo-Random Number Generator can be found!\r\nWithout a 'CSPRNG', signatures can be created and verified with existing keys, but new keys cannot be created.\r\nEither upgrade to Python 3.3, or install PyCrypto for your current platform/python version. Alternatively, use this module on a platform providing an OS-level CSPRNG, such as Linux's /dev/urandom.")
-            RNG = None
+            winwarning = " On Unix/POSIX based platforms (which you seem to be using), os.urandom probably calls /dev/urandom, which should be cryptographically secure. For better assurance, consider upgrading to Python 3.3, or installing PyCrypto."
+        print("Python Version is less than 3.3, and PyCrypto is not installed. Will use os.urandom for random bytes when generating keys."+winwarning)
 
 class Keypair:
     def __init__(self, keypair=None):

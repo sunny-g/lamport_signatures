@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import lamport
 import base64
-from Crypto.Hash import SHA512
+from hashlib import sha512
 # lamport.py provides:
 # - Keypair(existing_keypair):
 #   -> generate_keypair - called automatically if keypair created empty
@@ -61,7 +61,7 @@ class MerkleTree:
                 previous_node = self.hash_tree[tree_depth-1][previous_node_index]
                 brother_node = self.hash_tree[tree_depth-1][brother_node_index]
                 # Generate new hash above these two hashes:
-                new_node_hash = SHA512.new(previous_node+brother_node).digest()
+                new_node_hash = sha512(previous_node+brother_node).digest()
                 # Embed new hash "above" constitutent hashes in new layer:
                 self.hash_tree[tree_depth].append(new_node_hash)
 
