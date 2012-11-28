@@ -2,9 +2,7 @@
 # Thanks to Dwayne C. Litzenberger <dlitz@dlitz.net>
 
 import sys
-import errno
 import os
-import stat
 
 class BaseRNG(object):
 
@@ -63,53 +61,52 @@ class BaseRNG(object):
     def _read(self, N):
         raise NotImplementedError("child class must implement this")
 
-class DevURandomRNG(BaseRNG):
+class WindowsRNG(BaseRNG):
 
-    def __init__(self, devname=None):
-        if devname is None:
-            self.name = "/dev/urandom"
-        else:
-            self.name = devname
+    name = "<CryptGenRandom>"
 
-        # Test that /dev/urandom is a character special device
-        f = open(self.name, "rb", 0)
-        fmode = os.fstat(f.fileno())[stat.ST_MODE]
-        if not stat.S_ISCHR(fmode):
-            f.close()
-            raise TypeError("%r is not a character special device" % (self.name,))
-
-        self.__file = f
-
+    def __init__(self):
+        self.__winrand = os.urandom
         BaseRNG.__init__(self)
 
+    def flush(self):
+        """Work around weakness in Windows RNG.
+
+        The CryptGenRandom mechanism in some versions of Windows allows an
+        attacker to learn 128 KiB of past and future output.  As a workaround,
+        this function reads 128 KiB of 'random' data from Windows and discards
+        it.
+
+        For more information about the weaknesses in CryptGenRandom, see
+        _Cryptanalysis of the Random Number Generator of the Windows Operating
+        System_, by Leo Dorrendorf and Zvi Gutterman and Benny Pinkas
+        http://eprint.iacr.org/2007/419
+        """
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        data = self.__winrand.read(128*1024)
+        assert (len(data) == 128*1024)
+        BaseRNG.flush(self)
+
     def _close(self):
-        self.__file.close()
+        self.__winrand = None
 
     def _read(self, N):
-        # Starting with Python 3 open with buffering=0 returns a FileIO object.
-        # FileIO.read behaves like read(2) and not like fread(3) and thus we
-        # have to handle the case that read returns less data as requested here
-        # more carefully.
-        data = b""
-        while len(data) < N:
-            try:
-                d = self.__file.read(N - len(data))
-            except IOError as e:
-                # read(2) has been interrupted by a signal; redo the read
-                if e.errno == errno.EINTR:
-                    continue
-                raise
-
-            if d is None:
-                # __file is in non-blocking mode and no data is available
-                return data
-            if len(d) == 0:
-                # __file is in blocking mode and arrived at EOF
-                return data
-
-            data += d
+        # Unfortunately, research shows that CryptGenRandom doesn't provide
+        # forward secrecy and fails the next-bit test unless we apply a
+        # workaround, which we do here.  See http://eprint.iacr.org/2007/419
+        # for information on the vulnerability.
+        self.flush()
+        data = self.__winrand.read(N)
+        self.flush()
         return data
 
 def new(*args, **kwargs):
-    return DevURandomRNG(*args, **kwargs)
+    if os.name == "nt":
+        # Windows has a shitty RNG, so PyCrypto included workarounds to fix.
+        # These used to use winrandom module but os.urandom calls cryptgenrandom
+        # so external module is no longer necessary, just python workarounds.
+        return WindowsRNG(*args, **kwargs)
+    else:
+        return os.urandom(*args, **kwargs)
 
