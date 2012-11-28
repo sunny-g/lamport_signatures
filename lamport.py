@@ -2,6 +2,11 @@
 '''An implementation of the Lamport Signature scheme.
 Warning: written by an amateur. Use at your own risk!'''
 
+global_debug = False
+def debug_ln(debugstr):
+    if global_debug:
+        print(debugstr)
+
 # Todo: remove the PyCrypto RNG requirement: new SSL RNG in Standard Library?
 import sys
 import bitstring
@@ -13,12 +18,14 @@ from hashlib import sha512
 try:
     # Introduced in Python 3.3 standard library: wraps OpenSSL/libssl
     from ssl import RAND_bytes as RNG
+    debug_ln("Using ssl module for Random Number Generation.")
 except ImportError:
     try:
         # Failing that, if PyCrypto is installed, can use that:
         from Crypto import Random
         _RNG = Random.new()
         RNG = _RNG.read
+        debug_ln("Using PyCrypto module for Random Number Generation.")
     except ImportError:
         # Warn user if no RNG is available for key creation:
         print("WARNING: No Crypto-Secure Random Number Generator can be found!\r\nWithout 'CSPRNG', signatures can be created and verified with existing keys, but new keys cannot be created.\r\nEither upgrade to Python 3.3, or install PyCrypto for your current platform/python version.")
