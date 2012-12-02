@@ -63,13 +63,16 @@ class Keypair:
         if not privkey: privkey = self.private_key
         def hashpair(pair):
             return [sha512(pair[0]).digest(), sha512(pair[1]).digest()]
-        new_pubkey
+        new_pubkey = []
         for priv_pair in privkey:
             new_pubkey.append(hashpair(priv_pair))
         return new_pubkey
 
     def tree_node_hash(self):
-        'Used to generate pubkey hash for Merkle-Tree generation.'
+        '''Used to generate pubkey hash for Merkle-Tree generation.
+        This method simply concatenates each pubkey hash-pair end-on-end
+        to create a long string of X1Y1X2Y2X3Y3..., then returns the
+        sha512 hash of this string.'''
         flattened_pubkey = b''.join([b''.join(unitpair) for unitpair in self.public_key])
         merkel_node_hash = sha512(flattened_pubkey).digest()
         return merkel_node_hash
@@ -77,18 +80,19 @@ class Keypair:
     def export_keypair(self):
         exportable_publickey = self._exportable_key(self.public_key)
         exportable_privatekey = self._exportable_key(self.private_key)
-        b64keypair = {'public_key':exportable_publickey,
-                      'private_key':exportable_privatekey}
+        b64keypair = {'pub':exportable_publickey,
+                      'sec':exportable_privatekey}
         return json.dumps(b64keypair)
 
     def export_public_key(self):
-        return json.dumps({'public_key':self._exportable_key(self.public_key)})
+        return json.dumps({'pub':self._exportable_key(self.public_key)})
 
     def export_private_key(self):
-        return json.dumps({'private_key':self._exportable_key(self.private_key)})
+        return json.dumps({'sec':self._exportable_key(self.private_key)})
 
     def _exportable_key(self, key=None):
-        if key is None: key= self.public_key
+        if key is None:
+            key= self.public_key
         export_key = []
         for unit in key:
             unit0 = str(base64.b64encode(unit[0]), 'utf-8')
@@ -104,15 +108,18 @@ class Keypair:
                 unit1 = base64.b64decode(bytes(unit_pair[1],'utf-8'))
                 key_in.append([unit0, unit1])
             return key_in
-        keypair = json.loads(keypair)
+        if isinstance(keypair, str):
+            keypair = json.loads(keypair)
+        elif not isinstance(keypair, dict):
+            raise TypeError("Only json-formatted strings or native dicts are supported for key import.")
         available_keys = keypair.keys()
-        if 'private_key' in available_keys and 'public_key' in available_keys:
-            return parse_key(keypair['private_key']), parse_key(keypair['public_key'])
-        elif 'private_key' in available_keys:
-            privkey = parse_key(keypair['private_key'])
+        if 'sec' in available_keys and 'pub' in available_keys:
+            return parse_key(keypair['sec']), parse_key(keypair['pub'])
+        elif 'sec' in available_keys:
+            privkey = parse_key(keypair['sec'])
             return privkey, self.rebuild_pubkey(privkey)
-        elif 'public_key' in available_keys:
-            return None, parse_key(keypair['public_key'])
+        elif 'pub' in available_keys:
+            return None, parse_key(keypair['pub'])
 
     def verify_keypair(self):
         def check_key(key):
@@ -135,7 +142,7 @@ class Keypair:
                 raise TypeError("No keypair found!")
             else:
                 check_key(self.public_key)
-                print("Only pubkey found. Can verify; cannot sign.")
+                debug_ln("Only pubkey found. Can verify; cannot sign.")
                 return True
         else:
             check_key(self.private_key)
@@ -143,7 +150,7 @@ class Keypair:
                 check_key(self.public_key)
             else:
                 self.public_key = self.rebuild_pubkey()
-            print("Private key found. Can sign and verify self-signed messages.")
+            debug_ln("Private key found. Can sign and verify self-signed messages.")
             return True
 
 class Signer:
@@ -187,11 +194,6 @@ class Signer:
         if not isinstance(message_hash, bytes):
             raise TypeError(("message_hash must be a binary hash, "
                              "as returned by sha512.digest()"))
-      #  hash_binary = bitarray.bitarray(endian='big')
-      #  hash_binary.frombytes(message_hash)
-      #  if hash_binary.length() != 512:
-      #      raise ValueError("Message hash must be 512 bits in length.")
-      #  return hash_binary.tolist()
         hash_bits = bitstring.BitString(message_hash)
         return [int(x) for x in list(hash_bits.bin)]
 
@@ -264,15 +266,24 @@ def test():
     mykp = Keypair()
     print("Generating Pubkey..")
     mypubkey = mykp.export_public_key()
+    print("Testing keypair export..")
+    exp_mykp = mykp.export_keypair()
+    print("Testing keypair import..")
+    del(mykp)
+    mykp = Keypair(exp_mykp)
+    print("Testing secret key export..")
+    myseckey = mykp.export_private_key()
+    print("Testing secret key import..")
+    del(mykp)
+    mykp = Keypair(myseckey)
     print("Initialising Signer and Verifier..")
     mysigner = Signer(mykp)
     myverifier = Verifier(Keypair(mypubkey))
-    print("Generating Authentic Signature for message: '{0}'".format(mymsg))
+    print("Generating Authentic Signature for message:\r\n\t'{0}'".format(mymsg))
     mysig = mysigner.generate_signature(mymsg)
-    print("Attempting to Verify Signature:")
-    print("Verification Result:",myverifier.verify_signature(mymsg, mysig))
+    print("Attempting to Verify Signature...Result:", myverifier.verify_signature(mymsg, mysig))
     falsemsg = mymsg+" I grant Cathal unlimited right of attourney!"
-    print("Attempting to Verify a Falsified Signature for message: {0}".format(falsemsg))
+    print("Attempting to Verify a Falsified Signature for message:\r\n\t{0}".format(falsemsg))
     print("Verification Result:",myverifier.verify_signature(falsemsg, mysig))
     print("Finished!")
 

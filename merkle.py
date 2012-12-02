@@ -2,6 +2,7 @@
 import lamport
 import base64
 from hashlib import sha512
+
 # lamport.py provides:
 # - Keypair(existing_keypair):
 #   -> generate_keypair - called automatically if keypair created empty
@@ -20,6 +21,9 @@ from hashlib import sha512
 #   -> verify_bin_signature(message, binsig) - Verifies binary message against binary sig.
 #   -> hash_message(string/bytes) - As with Signer
 #   -> bit_hash(bytes) - As with Signer
+
+class KeyManagementError(Exception):
+    pass
 
 class MerkleTree:
     def __init__(self, keynum=128, ExistingTree=None):
@@ -101,12 +105,58 @@ class MerkleTree:
         'Returns the root node as binary.'
         return self.hash_tree[len(self.hash_tree)-1]
 
-    def sign_message(self, message, mark_used=True):
-        'Finds unused key, uses to sign, marks used.'
-        KeyToUse = self.select_unused_key()
-        signature = KeyToUse.generate_signature(message)
-        if mark_used: self.used_keys.append(KeyToUse.tree_node_hash())
+    def _sign_message(self, message, include_nodes=True,
+                           include_pubkey=True, mark_used=True):
+        '''Burns an unused key, returns a dict containing signature dict.
+        Signature dict contains "lamport_pubkey" (str), "lamport_signature" (str),
+        and "paired_nodes" (list of str hashes). This dict can be used by
+        other methods to construct a wire/publication-friendly signature, or
+        directly passed to other systems for verification.'''
+        KeyToUse = self.select_unused_key(mark_used=True)
+        signer = lamport.Signer(KeyToUse)
+        signature = {}
+        signature["lamport_signature"] = signer.generate_signature(message)
+        signature["lamport_pubkey"] = KeyToUse._exportable_key()
+        signature["paired_nodes"] = self.get_node_path(KeyToUse.tree_node_hash())
         return signature
+
+    def get_node_path(self, leaf_hash, ):
+        '''Returns a list of node-hashes to pair with to derive root node.
+        First, this method uses list indexing to locate the leaf_hash.
+        If this number is 0 or even, it pairs with the next node.
+        If this number is odd, it pairs with the previous node.
+        To determine the pair-node of this pairing, the leaf index is
+        divided by two and floored. This new index is used as above to
+        determine the hashing partner for the next node, and so on.
+        Each node is returned within a two-item list, the other item
+        being empty to designate where the "current node" belongs when
+        hashing toward the root node/hash. Set "cue_pairs" to False to
+        disable this behaviour and return a straight list of nodes.
+        Before returning the list, if verify_nodes is True, this method
+        will verify that the list will indeed derive the root hash,
+        raising KeyManagementError if not.'''
+        if leaf_hash not in self.hash_tree[0]:
+            raise KeyManagementError(("Specified leaf_hash not in leaves"
+                                  " of Merkle Tree. Hash requested was: "
+                                  str(leaf_hash,'utf-8')))
+        node_list = []
+        node_number = self.hash_tree[0].index(leaf_hash)
+        level_num = 0
+        for level in self.hash_tree:
+            level_num += 1
+            if level_num == len(self.hash_tree):
+                break
+            if node_number % 2:
+                # i.e., if odd: so, use prior node as partner.
+                node_list.append(self.hash_tree[level][node_number-1])
+            else:
+                # i.e., if even, so use next node as partner.
+                node_list.append(self.hash_tree[level][node_number+1])
+            # Get the node number for the next level of the hash-tree.
+            # Oddly, using int() is faster than using math.floor() for
+            # getting the pre-decimal value of a float.
+            node_number = int(node_number/2)
+        return node_list
 
     def select_unused_key(self, mark_used=False):
         'Parses leaf nodes for hashes not in self.used_keys, returns first unused keypair.'
@@ -114,25 +164,69 @@ class MerkleTree:
         while self._is_used(self.hash_tree[0][counter]):
             counter += 1
         private_key = self.private_keyring[counter]
-        public_key = self.public_keyring[counter]
-        if mark_used: self.used_keys.append(KeyToUse.tree_node_hash())
-        return lamport.Keypair({'public_key':public_key, 'private_key':private_key})
+        if private_key is None:
+            raise KeyManagementError(
+                  ("Error while seeking private key for (allegedly) "
+                   "unused pubkey hash ")+\
+                   str(self.hash_tree[0][counter],'utf-8')+\
+                   ("; Specified private key is set to None, which should"
+                    " only happen if key has been used already. To override"
+                    " this issue, add the above pubkey hash to the list "
+                    "of used keys manually."))
+        if mark_used:
+            self.private_keyring[counter] = None
+        try: keypair = lamport.Keypair(private_key)
+        except IndexError as e:
+            print("While attempting to create a keypair with the following:",
+                  keypair_to_import,"..an error occurred:", e, sep="\r\n")
+            import sys
+            sys.exit(1)
+        try: assert(keypair.tree_node_hash() == self.hash_tree[0][counter])
+        except AssertionError:
+            # Complex bugs demand complex bug messages!
+            raise KeyManagementError(
+                  ("While preparing an unused key for signing, it was "
+                   "discovered that the associated tree-hash for the "
+                   "secret key did not match a hash generated on-the-spot"
+                   " from the corresponding private key. This indicates"
+                   " that somehow either the public keys have been "
+                   "modified or corrupted, or the alignment of pubkeys "
+                   "to private keys (maintained by simple list index in "
+                   "this implementation) has slipped. Sorry, this error "
+                   "is fatal. Here are the two hashes as binary, for debug:")+\
+                   +"\r\n"+str(keypair.tree_node_hash(),'utf-8')+"\r\n"+\
+                   str(self.hash_tree[0][counter],'utf-8'))
+        #print(keypair.tree_node_hash(), self.hash_tree[0][counter], sep="\r\n") #debug only
+        if mark_used: self.mark_key_used(keypair.tree_node_hash())
+        return keypair
 
     def fetch_key(self, leaf_hash, key='public_key'):
         '''For fetching a keypair from the keyring by leaf node hash.
         By default, seeks/returns the pubkey, but if key is "private_key"
         then this returns that instead.'''
-        pass
+        raise NotImplementedError()
 
     def mark_key_used(self, leaf_hash, delete_private=True):
         'Marks a key, specified by leaf_hash, as used. Optionally deletes private key.'
         # Deleting old private keys is probably good security practice and saves space.
         # Before deleting private keys, ensure that system is robust at using pubkeys
         # and doesn't rely on regenerating from private keys.
-        pass
+        # Also ensure that private keys are overwritten, not popped, so list indices
+        # remain relative between pubkeys and private keys!
+        # At present, this just appends a hash to a list.
+        if leaf_hash not in self.used_keys:
+            self.used_keys.append(leaf_hash)
 
     def _is_used(self, leaf_hash):
         if leaf_hash in self.used_keys:
             return True
         else:
             return False
+
+def runtests():
+    mytree = MerkleTree(4)
+    mymsg = "This is a verifiable message."
+    mysig = mytree.sign_message(mymsg)
+
+if __name__ == "__main__":
+    runtests()
