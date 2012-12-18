@@ -53,7 +53,8 @@ class Keypair:
             if all_RNG:
                 self.private_key, self.public_key = self.generate_raw_random_keypair()
             else:
-                self.private_key, self.public_key = self.generate_hash_chain_keypair()
+                # Default behaviour without arguments.
+                self.private_key, self.public_key, self.rng_secret = self.generate_hash_chain_keypair(preserve_secrets=True)
 
     # N00b note: @staticmethod removes need to have "self" as method
     # first argument, and offers very marginal performance increase.
@@ -100,8 +101,12 @@ class Keypair:
         This method is nearly ten times faster than using raw RNG output.
         '''
         if not secret_seeds:
+            # Generate a pair of large seeds for use in generating
+            # the private key hash-chain.
             secret_seeds = [RNG(1024), RNG(1024)]
         else:
+            # Assume that secret seeds are provided as a list of
+            # b64 encoded strings and decode accordingly.
             secret_seeds = [self._b64str_bin(i) for i in secret_seeds]
         private_key = []
         prior_hashes = [sha512(i).digest() for i in secret_seeds]
@@ -126,7 +131,7 @@ class Keypair:
             return private_key, public_key, secret_seeds
         else:
             del(secret_seeds)
-            return private_key, public_key
+            return private_key, public_key, None
 
     def rebuild_pubkey(self, privkey=None):
         if not privkey: privkey = self.private_key
@@ -145,6 +150,20 @@ class Keypair:
         flattened_pubkey = b''.join([b''.join(unitpair) for unitpair in self.public_key])
         merkel_node_hash = sha512(flattened_pubkey).digest()
         return merkel_node_hash
+
+    def export_key_seed(self):
+        '''Returns a dictionary with RNG seeds and merkle-tree hash.
+        This is intended for minimised merkle trees, where seeds can be
+        indexed by node hash and used to re-derive the lamport keypair
+        as-needed. This minimises the space needed to store the Merkle
+        tree in full, and reduces encryption/decryption time for
+        passphrase-protected Merkle trees.
+        '''
+        if not self.rng_secret:
+            raise AttributeError("This keypair object does not have the"+\
+                      " required 'rng_secret' attribute; perhaps it was"+\
+                      " imported from a raw keypair rather than a secret seed?")
+        return {"Private Seed":self.rng_secret, "Leaf Hash":self.tree_node_hash()}
 
     def export_keypair(self):
         exportable_publickey = self._exportable_key(self.public_key)
