@@ -142,14 +142,16 @@ class Keypair:
             new_pubkey.append(hashpair(priv_pair))
         return new_pubkey
 
-    def tree_node_hash(self):
+    def tree_node_hash(self, b64=False):
         '''Used to generate pubkey hash for Merkle-Tree generation.
         This method simply concatenates each pubkey hash-pair end-on-end
         to create a long string of X1Y1X2Y2X3Y3..., then returns the
         sha512 hash of this string.'''
         flattened_pubkey = b''.join([b''.join(unitpair) for unitpair in self.public_key])
-        merkel_node_hash = sha512(flattened_pubkey).digest()
-        return merkel_node_hash
+        merkle_node_hash = sha512(flattened_pubkey).digest()
+        if b64:
+            merkle_node_hash = self._bin_b64str(merkle_node_hash)
+        return merkle_node_hash
 
     def export_key_seed(self):
         '''Returns a dictionary with RNG seeds and merkle-tree hash.
@@ -163,7 +165,7 @@ class Keypair:
             raise AttributeError("This keypair object does not have the"+\
                       " required 'rng_secret' attribute; perhaps it was"+\
                       " imported from a raw keypair rather than a secret seed?")
-        return {"Private Seed":self.rng_secret, "Leaf Hash":self.tree_node_hash()}
+        return {"Private Seed":self.rng_secret, "Leaf Hash":self.tree_node_hash(b64=True)}
 
     def export_keypair(self):
         exportable_publickey = self._exportable_key(self.public_key)
