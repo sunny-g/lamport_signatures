@@ -193,38 +193,17 @@ class MerkleTree:
         private_key = self.private_keyring[counter]
         if private_key is None:
             raise KeyManagementError(
-                  ("Error while seeking private key for (allegedly) "
-                   "unused pubkey hash ")+\
-                   str(self.hash_tree[0][counter],'utf-8')+\
-                   ("; Specified private key is set to None, which should"
-                    " only happen if key has been used already. To override"
-                    " this issue, add the above pubkey hash to the list "
-                    "of used keys manually."))
-        if mark_used:
-            self.private_keyring[counter] = None
+                  "Selected 'unused' key appears to have been used.")
         try: keypair = lamport.Keypair(private_key)
         except IndexError as e:
             print("While attempting to create a keypair with the following:",
                   keypair_to_import,"..an error occurred:", e, sep="\r\n")
-            import sys
-            sys.exit(1)
         try: assert(keypair.tree_node_hash() == self.hash_tree[0][counter])
         except AssertionError:
-            # Complex bugs demand complex bug messages!
-            raise KeyManagementError(
-                  ("While preparing an unused key for signing, it was "
-                   "discovered that the associated tree-hash for the "
-                   "secret key did not match a hash generated on-the-spot"
-                   " from the corresponding private key. This indicates"
-                   " that somehow either the public keys have been "
-                   "modified or corrupted, or the alignment of pubkeys "
-                   "to private keys (maintained by simple list index in "
-                   "this implementation) has slipped. Sorry, this error "
-                   "is fatal. Here are the two hashes as binary, for debug:")+\
-                   +"\r\n"+str(keypair.tree_node_hash(),'utf-8')+"\r\n"+\
-                   str(self.hash_tree[0][counter],'utf-8'))
-        #print(keypair.tree_node_hash(), self.hash_tree[0][counter], sep="\r\n") #debug only
-        if mark_used: self.mark_key_used(keypair.tree_node_hash())
+            raise KeyManagementError("Tree leaf node does not match keypair hash generated on-the-fly.")
+        if mark_used:
+            self.mark_key_used(keypair.tree_node_hash())
+            self.private_keyring[counter] = None
         return keypair
 
     def fetch_key(self, leaf_hash, key='public_key'):
