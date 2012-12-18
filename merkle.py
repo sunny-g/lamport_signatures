@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import lamport
 import base64
+import json
 from hashlib import sha512
 
 # lamport.py provides:
@@ -39,6 +40,20 @@ class MerkleTree:
         else:
             self.import_tree(ExistingTree)
             self.verify_tree()
+
+    # N00b note: @staticmethod removes need to have "self" as method
+    # first argument, and offers very marginal performance increase.
+    # This means, of course, that these methods cannot alter the state
+    # of the object, as they have not been passed the object/instance.
+    @staticmethod
+    def _bin_b64str(binary_stuff):
+        'Utility method for converting bytes into b64-encoded strings.'
+        return str(base64.b64encode(binary_stuff), 'utf-8')
+
+    @staticmethod
+    def _b64str_bin(b64_encoded_stuff):
+        'Restores bytes data from b64-encoded strings.'
+        return base64.b64decode(bytes(b64_encoded_stuff, 'utf-8'))
 
     def generate_keypairs(self, keynum):
         '''Generates keypairs and populates leaf nodes with pubkey hashes.'''
@@ -88,7 +103,7 @@ class MerkleTree:
         for layer in self.hash_tree:
             exportable_tree.append([])
             for node_hash in layer:
-                b64_str_hash = str(base64.b64encode(node_hash), 'utf-8')
+                b64_str_hash = self._bin_b64str(node_hash)
                 exportable_tree[len(exportable_tree)-1].append(b64_str_hash)
         return exportable_tree
 
@@ -99,7 +114,7 @@ class MerkleTree:
 
     def tree_public_key(self):
         'Returns the root node as a base-64 encoded string.'
-        return str(base64.b64encode(self.root_hash()),'utf-8')
+        return self._bin_b64str(self.root_hash())
 
     def root_hash(self):
         'Returns the root node as binary.'
@@ -109,9 +124,9 @@ class MerkleTree:
                            include_pubkey=True, mark_used=True):
         '''Burns an unused key, returns a dict containing signature dict.
         Signature dict contains "lamport_pubkey" (str), "lamport_signature" (str),
-        and "paired_nodes" (list of str hashes). This dict can be used by
-        other methods to construct a wire/publication-friendly signature, or
-        directly passed to other systems for verification.'''
+        and "node_path" (list of two-member (string-hash/None) list).
+        This dict can be used by other methods to construct a wire/pub-friendly
+        signature, or directly passed to other systems for verification.'''
         KeyToUse = self.select_unused_key(mark_used=True)
         signer = lamport.Signer(KeyToUse)
         signature = {}
@@ -120,7 +135,7 @@ class MerkleTree:
         signature["paired_nodes"] = self.get_node_path(KeyToUse.tree_node_hash())
         return signature
 
-    def get_node_path(self, leaf_hash, ):
+    def get_node_path(self, leaf_hash, cue_pairs=True, verify_nodes=True):
         '''Returns a list of node-hashes to pair with to derive root node.
         First, this method uses list indexing to locate the leaf_hash.
         If this number is 0 or even, it pairs with the next node.
@@ -135,10 +150,13 @@ class MerkleTree:
         Before returning the list, if verify_nodes is True, this method
         will verify that the list will indeed derive the root hash,
         raising KeyManagementError if not.'''
+        # Yes, saving string/None pairs as tuples would make this more
+        # efficient, but this is intended for JSON-export among other
+        # export formats, and Tuples are not supported by straight JSON.
         if leaf_hash not in self.hash_tree[0]:
-            raise KeyManagementError(("Specified leaf_hash not in leaves"
-                                  " of Merkle Tree. Hash requested was: "
-                                  str(leaf_hash,'utf-8')))
+            raise KeyManagementError("Specified leaf_hash not in leaves"+\
+                                  " of Merkle Tree. Hash requested was: "+\
+                                  str(leaf_hash,'utf-8'))
         node_list = []
         node_number = self.hash_tree[0].index(leaf_hash)
         level_num = 0
@@ -148,14 +166,23 @@ class MerkleTree:
                 break
             if node_number % 2:
                 # i.e., if odd: so, use prior node as partner.
-                node_list.append(self.hash_tree[level][node_number-1])
+                if cue_pairs:
+                    node_list.append([self._bin_b64str(level[node_number-1]), None])
+                else:
+                    node_list.append(self._bin_b64str(level[node_number-1]))
             else:
                 # i.e., if even, so use next node as partner.
-                node_list.append(self.hash_tree[level][node_number+1])
+                if cue_pairs:
+                    node_list.append([None, self._bin_b64str(level[node_number+1])])
+                else:
+                    node_list.append(self._bin_b64str(level[node_number+1]))
             # Get the node number for the next level of the hash-tree.
             # Oddly, using int() is faster than using math.floor() for
-            # getting the pre-decimal value of a float.
+            # getting the pre-decimal value of a positive float.
             node_number = int(node_number/2)
+        if verify_nodes:
+            pass
+            #if not self.derive_root()
         return node_list
 
     def select_unused_key(self, mark_used=False):
@@ -226,7 +253,8 @@ class MerkleTree:
 def runtests():
     mytree = MerkleTree(4)
     mymsg = "This is a verifiable message."
-    mysig = mytree.sign_message(mymsg)
+    mysig = mytree._sign_message(mymsg)
+    print("This is the signature:", json.dumps(mysig, indent=1))
 
 if __name__ == "__main__":
     runtests()

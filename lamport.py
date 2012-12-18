@@ -37,14 +37,23 @@ except ImportError:
         print("Python Version is less than 3.3, and PyCrypto is not installed. Will use os.urandom for random bytes when generating keys."+winwarning)
 
 class Keypair:
-    def __init__(self, keypair=None):
+    def __init__(self, keypair=None, all_RNG=False):
+        '''Can be given a keypair to import and use, or generates one automatically.
+        Default is to create a private keypair using hash-chaining (fast)
+        If all_RNG is set to True (or any other value that evals True),
+        private keys are instead built using raw RNG output.
+        This is much slower and is more likely to cause blockage of RNGs that
+        cannot produce enough random output to satisfy the lamport object's needs.'''
         if keypair:
             self.private_key, self.public_key = self.import_keypair(keypair)
             self.verify_keypair()
         else:
-            self.private_key, self.public_key = self.generate_keypair()
+            if all_RNG:
+                self.private_key, self.public_key = self.generate_raw_random_keypair()
+            else:
+                self.private_key, self.public_key = self.generate_hash_chain_keypair()
 
-    def generate_keypair(self, leaf_hash=True):
+    def generate_raw_random_keypair(self):
         '''Generates one sha512 lamport keypair for this object.
         Returns private key (list of lists), public key (list of lists).'''
         private_key = []
@@ -57,6 +66,38 @@ class Keypair:
             # Adds the numbers and hashes to the end of the growing keys
             private_key.append(private_unit)
             public_key.append(public_unit)
+        return private_key, public_key
+
+    def generate_hash_chain_keypair(self):
+        '''Saves on CSPRNG output by using a secret seed to generate
+        secret hash chains, and then generating the public hash of each
+        secret hash as pubkey.
+        In order to prevent derivation of the entire private key upon
+        publication of some secret hashes, each subsequent hash in the
+        private hash-chains are seeded with the secret RNG output as well
+        as the prior hash.
+        The secret RNG output is discarded after private key generation.
+        '''
+        secret_seeds = [RNG(256), RNG(256)]
+        private_key = []
+        prior_hashes = [sha512(i).digest() for i in secret_seeds]
+        for i in range(0,512):
+            # Make new hash functions
+            new_hashes = [sha512(), sha512()]
+            # Make room for the digests to be added to private_key
+            append_hashes = []
+            for i in range(0,2):
+                # Fill hash buffer with the previous hash digest for
+                # this position
+                new_hashes[i].update(prior_hashes[i])
+                new_hashes[i].update(secret_seeds[i])
+                i_digest = new_hashes[i].digest()
+                prior_hashes[i] = i_digest
+                append_hashes.append(i_digest)
+            private_key.append(append_hashes)
+        # Hasten destruction of now-defunct secret.
+        del(secret_seeds)
+        public_key = self.rebuild_pubkey(private_key)
         return private_key, public_key
 
     def rebuild_pubkey(self, privkey=None):
