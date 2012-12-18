@@ -37,14 +37,16 @@ except ImportError:
         print("Python Version is less than 3.3, and PyCrypto is not installed. Will use os.urandom for random bytes when generating keys."+winwarning)
 
 class Keypair:
-    def __init__(self, keypair=None, all_RNG=False):
+    def __init__(self, private_seed, keypair=None, all_RNG=False):
         '''Can be given a keypair to import and use, or generates one automatically.
         Default is to create a private keypair using hash-chaining (fast)
         If all_RNG is set to True (or any other value that evals True),
         private keys are instead built using raw RNG output.
         This is much slower and is more likely to cause blockage of RNGs that
         cannot produce enough random output to satisfy the lamport object's needs.'''
-        if keypair:
+        if private_seed:
+            self.private_key, self.public_key = self.generate_hash_chain_keypair(private_seed)
+        elif keypair:
             self.private_key, self.public_key = self.import_keypair(keypair)
             self.verify_keypair()
         else:
@@ -53,9 +55,25 @@ class Keypair:
             else:
                 self.private_key, self.public_key = self.generate_hash_chain_keypair()
 
+    # N00b note: @staticmethod removes need to have "self" as method
+    # first argument, and offers very marginal performance increase.
+    # This means, of course, that these methods cannot alter the state
+    # of the object, as they have not been passed the object/instance.
+    @staticmethod
+    def _bin_b64str(binary_stuff):
+        'Utility method for converting bytes into b64-encoded strings.'
+        return str(base64.b64encode(binary_stuff), 'utf-8')
+
+    @staticmethod
+    def _b64str_bin(b64_encoded_stuff):
+        'Restores bytes data from b64-encoded strings.'
+        return base64.b64decode(bytes(b64_encoded_stuff, 'utf-8'))
+
     def generate_raw_random_keypair(self):
         '''Generates one sha512 lamport keypair for this object.
-        Returns private key (list of lists), public key (list of lists).'''
+        Returns private key (list of lists), public key (list of lists).
+        It is recommended to use generate_hash_chain_keypair instead, as
+        it is far faster and less likely to block the RNG.'''
         private_key = []
         public_key = []
         for i in range(0,512):
@@ -68,7 +86,7 @@ class Keypair:
             public_key.append(public_unit)
         return private_key, public_key
 
-    def generate_hash_chain_keypair(self):
+    def generate_hash_chain_keypair(self, secret_seeds=None, preserve_secrets=False):
         '''Saves on CSPRNG output by using a secret seed to generate
         secret hash chains, and then generating the public hash of each
         secret hash as pubkey.
@@ -76,9 +94,15 @@ class Keypair:
         publication of some secret hashes, each subsequent hash in the
         private hash-chains are seeded with the secret RNG output as well
         as the prior hash.
-        The secret RNG output is discarded after private key generation.
+        The secret RNG output is currently discarded after private key
+        generation, but may be retained for re-derivation of the private
+        key from the seed in future, to allow for far smaller private keys.
+        This method is nearly ten times faster than using raw RNG output.
         '''
-        secret_seeds = [RNG(256), RNG(256)]
+        if not secret_seeds:
+            secret_seeds = [RNG(1024), RNG(1024)]
+        else:
+            secret_seeds = [self._b64str_bin(i) for i in secret_seeds]
         private_key = []
         prior_hashes = [sha512(i).digest() for i in secret_seeds]
         for i in range(0,512):
@@ -95,10 +119,14 @@ class Keypair:
                 prior_hashes[i] = i_digest
                 append_hashes.append(i_digest)
             private_key.append(append_hashes)
-        # Hasten destruction of now-defunct secret.
-        del(secret_seeds)
+        # Derive pubkey from private key in the usual way..
         public_key = self.rebuild_pubkey(private_key)
-        return private_key, public_key
+        if preserve_secrets:
+            secret_seeds = [self._bin_b64str(i) for i in secret_seeds]
+            return private_key, public_key, secret_seeds
+        else:
+            del(secret_seeds)
+            return private_key, public_key
 
     def rebuild_pubkey(self, privkey=None):
         if not privkey: privkey = self.private_key
