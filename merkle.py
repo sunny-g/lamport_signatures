@@ -27,13 +27,17 @@ class KeyManagementError(Exception):
     pass
 
 class MerkleTree:
-    def __init__(self, keynum=128, ExistingTree=None):
+    def __init__(self, keynum=128, ExistingTree=None, hash_chain_keys=True):
         self.private_keyring = []
         self.public_keyring = []
         self.public_hashes = []
         self.hash_tree = [[]]
         self.used_keys = []
         self.signatures = []
+        if hash_chain_keys:
+            self.key_type = "hash chain"
+        else:
+            self.key_type = "raw RNG"
         if not ExistingTree:
             self.generate_keypairs(keynum)
             self.generate_tree()
@@ -56,13 +60,31 @@ class MerkleTree:
         return base64.b64decode(bytes(b64_encoded_stuff, 'utf-8'))
 
     def generate_keypairs(self, keynum):
+        if self.key_type == "hash chain":
+            self._generate_hashchain_keypairs(keynum)
+        elif self.key_type == "raw RNG":
+            self._generate_RNG_keypairs(keynum)
+        else:
+            pass
+
+    def _generate_RNG_keypairs(self, keynum):
         '''Generates keypairs and populates leaf nodes with pubkey hashes.'''
         while keynum > 0:
             keynum -= 1
             newkey = lamport.Keypair()
             self.public_keyring.append(newkey.export_public_key())
             self.private_keyring.append(newkey.export_private_key())
-            self.hash_tree[0].append(newkey.tree_node_hash())            
+            self.hash_tree[0].append(newkey.tree_node_hash())
+
+    def _generate_hashchain_keypairs(self, keynum):
+        while keynum > 0:
+            keynum -= 1
+            newkey = lamport.Keypair()
+            key_seed = newkey.export_key_seed()
+            # key_seed contains "Private Seed", "Leaf Hash": both b64 str
+            self.private_keyring.append(key_seed['Private Seed'])
+            self.public_keyring.append(key_seed['Leaf Hash'])
+            self.hash_tree[0].append(newkey.tree_node_hash())
 
     def generate_tree(self):
         'Uses initial leaf values to populate hash-tree.'
@@ -187,6 +209,8 @@ class MerkleTree:
 
     def select_unused_key(self, mark_used=False):
         'Parses leaf nodes for hashes not in self.used_keys, returns first unused keypair.'
+        # Find an unused key by cycling through tree "leaves" and comparing
+        # to a list of used leaves.
         counter = 0
         while self._is_used(self.hash_tree[0][counter]):
             counter += 1
@@ -194,14 +218,22 @@ class MerkleTree:
         if private_key is None:
             raise KeyManagementError(
                   "Selected 'unused' key appears to have been used.")
-        try: keypair = lamport.Keypair(private_key)
+        # Import key as a lamport Keypair.
+        try:
+            if self.key_type == "hash chain":
+                keypair = lamport.Keypair(private_seed = private_key)
+            else:
+                keypair = lamport.Keypair(keypair = private_key)
         except IndexError as e:
             print("While attempting to create a keypair with the following:",
                   keypair_to_import,"..an error occurred:", e, sep="\r\n")
+        # Check key to make sure it matches its leaf hash:
         try: assert(keypair.tree_node_hash() == self.hash_tree[0][counter])
         except AssertionError:
             raise KeyManagementError("Tree leaf node does not match keypair hash generated on-the-fly.")
         if mark_used:
+            # Don't just mark it used, delete the key so it can't be used
+            # again by accident!
             self.mark_key_used(keypair.tree_node_hash())
             self.private_keyring[counter] = None
         return keypair
@@ -232,8 +264,23 @@ class MerkleTree:
 def runtests():
     mytree = MerkleTree(4)
     mymsg = "This is a verifiable message."
+    print("Attempting to sign the following:",mymsg,sep="\r\n\t")
     mysig = mytree._sign_message(mymsg)
-    print("This is the signature:", json.dumps(mysig, indent=1))
+    with open("testsig1.mlsig",mode='w') as SigOut:
+        SigOut.write(json.dumps(mysig, indent=2))
+    print("Signature successful, saved as testsig1.mlsig..")
+    mymsg2 = "This is a second message.."
+    mysig2 = mytree._sign_message(mymsg2)
+    print("Attempting to sign the following:",mymsg2,sep="\r\n\t")
+    mymsg3 = "..And a third.."
+    mysig3 = mytree._sign_message(mymsg3)
+    print("Attempting to sign the following:",mymsg3,sep="\r\n\t")
+    mymsg4 = "..and a fourth, this should use the last key."
+    mysig4 = mytree._sign_message(mymsg4)
+    print("Attempting to sign the following:",mymsg4,sep="\r\n\t")
+    mymsg5 = "..and a fifth; this shouldn't sign."
+    mysig5 = mytree._sign_message(mymsg5)
+    print("Attempting to sign the following:",mymsg5,sep="\r\n\t")
 
 if __name__ == "__main__":
     runtests()

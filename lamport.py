@@ -37,7 +37,7 @@ except ImportError:
         print("Python Version is less than 3.3, and PyCrypto is not installed. Will use os.urandom for random bytes when generating keys."+winwarning)
 
 class Keypair:
-    def __init__(self, private_seed, keypair=None, all_RNG=False):
+    def __init__(self, private_seed=None, keypair=None, all_RNG=False):
         '''Can be given a keypair to import and use, or generates one automatically.
         Default is to create a private keypair using hash-chaining (fast)
         If all_RNG is set to True (or any other value that evals True),
@@ -45,13 +45,15 @@ class Keypair:
         This is much slower and is more likely to cause blockage of RNGs that
         cannot produce enough random output to satisfy the lamport object's needs.'''
         if private_seed:
-            self.private_key, self.public_key = self.generate_hash_chain_keypair(private_seed)
+            self.private_key, self.public_key, self.rng_secret = self.generate_hash_chain_keypair(private_seed)
         elif keypair:
             self.private_key, self.public_key = self.import_keypair(keypair)
+            self.rng_secret = None
             self.verify_keypair()
         else:
             if all_RNG:
                 self.private_key, self.public_key = self.generate_raw_random_keypair()
+                self.rng_secret = None
             else:
                 # Default behaviour without arguments.
                 self.private_key, self.public_key, self.rng_secret = self.generate_hash_chain_keypair(preserve_secrets=True)
