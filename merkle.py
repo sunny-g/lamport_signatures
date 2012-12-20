@@ -143,13 +143,14 @@ class MerkleTree:
         return self.hash_tree[len(self.hash_tree)-1]
 
     def _sign_message(self, message, include_nodes=True,
-                           include_pubkey=True, mark_used=True):
+                           include_pubkey=True, mark_used=True,
+                           force_sign = False):
         '''Burns an unused key, returns a dict containing signature dict.
         Signature dict contains "lamport_pubkey" (str), "lamport_signature" (str),
         and "node_path" (list of two-member (string-hash/None) list).
         This dict can be used by other methods to construct a wire/pub-friendly
         signature, or directly passed to other systems for verification.'''
-        KeyToUse = self.select_unused_key(mark_used=True)
+        KeyToUse = self.select_unused_key(mark_used=True, force=force_sign)
         signer = lamport.Signer(KeyToUse)
         signature = {}
         signature["lamport_signature"] = signer.generate_signature(message)
@@ -207,8 +208,16 @@ class MerkleTree:
             #if not self.derive_root()
         return node_list
 
-    def select_unused_key(self, mark_used=False):
+    def select_unused_key(self, mark_used=True, force=False):
         'Parses leaf nodes for hashes not in self.used_keys, returns first unused keypair.'
+        # First, check that we're not on our last key; if so, unless
+        # the "force" flag is set True, raise a KeyManagementError
+        # suggesting that the last key be used to sign a new tree.
+        if len(self.used_keys) == len(self.hash_tree[0]) - 1:
+            if not force:
+                raise KeyManagementError("Only one key remains; you should use this key "+\
+                        "to sign a new Merkle tree so as not to waste any trust signatures"+\
+                        "accrued during the lifetime of this tree.")
         # Find an unused key by cycling through tree "leaves" and comparing
         # to a list of used leaves.
         counter = 0
