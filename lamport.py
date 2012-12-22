@@ -352,7 +352,16 @@ class Verifier:
         hash_bits = bitstring.BitString(message_hash)
         return [int(x) for x in list(hash_bits.bin)]
 
-def test():
+def sign_action(*args, **kwargs):
+    pass
+
+def verify_action(*args, **kwargs):
+    pass
+
+def generate_action(*args, **kwargs):
+    pass
+
+def test_action(*args,**kwargs):
     mymsg = "This is a secret message!"
     print("Generating Lamport Keypair..")
     mykp = Keypair()
@@ -380,4 +389,36 @@ def test():
     print("Finished!")
 
 if __name__ == "__main__":
-    test()
+    import argparse
+    ScriptDescription = ('A key generator and signature generator/verifyer'
+                         ' for the Lamport signature scheme, utilising'
+                         ' minimised private keys and the SHA-512 hash'
+                         ' algorithm for maximum integrity versus quantum'
+                         ' computation.')
+    ScriptEpilogue = ('A project by Cathal Garvey, licensed under the'
+                      ' GNU General Public License v3: https://www.gnu.org/licenses/gpl.html'
+                      ' - Code and other projects hosted on Gitorious: https://gitorious.org/~cathalgarvey')
+    MainParser = argparse.ArgumentParser(description=ScriptDescription, epilog=ScriptEpilogue)
+    Parsers = MainParser.add_subparsers(help="Subcommand or Mode:")
+    # Will built parsers below. For each parser, will embed a function property
+    # called "action_function" which will handle all the arguments passed
+    # to the script when calling this parser.
+
+    # First up: Generate a lamport keypair for later use with "sign" or "verify".
+    KeygenParser = Parsers.add_parser("generate", help="Generate a Lamport keypair.")
+    KeygenParser.set_defaults(action_function = generate_action)
+
+    # Use a specified Lamport key to sign a file or message.
+    SignParser = Parsers.add_parser('sign', help="Sign a message or file.")
+    SignParser.set_defaults(action_function = sign_action)
+
+    # Use a Lamport public key to verify a signature against a file or message.
+    VerifyParser = Parsers.add_parser("verify", help="Verify a signature against message or file.")
+    VerifyParser.set_defaults(action_function = verify_action)
+    
+    # Run tests on the script; mainly used for development.
+    TestParser = Parsers.add_parser("test", help="Run some tests to verify the script. Mainly used for development.")
+    TestParser.set_defaults(action_function = test_action)
+
+    Args = MainParser.parse_args()
+    Args.action_function(Args)
