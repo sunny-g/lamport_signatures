@@ -37,7 +37,7 @@ except ImportError:
         print("Python Version is less than 3.3, and PyCrypto is not installed. Will use os.urandom for random bytes when generating keys."+winwarning)
 
 class Keypair:
-    def __init__(self, private_seed=None, keypair=None, all_RNG=False):
+    def __init__(self, private_seed=None, key_data=None, all_RNG=False):
         '''Can be given a keypair to import and use, or generates one automatically.
         Default is to create a private keypair using hash-chaining (fast)
         If all_RNG is set to True (or any other value that evals True),
@@ -47,8 +47,8 @@ class Keypair:
         if private_seed:
             private_seed = self.import_seed(private_seed)
             self.private_key, self.public_key, self.rng_secret = self.generate_hash_chain_keypair(private_seed)
-        elif keypair:
-            self.private_key, self.public_key = self.import_keypair(keypair)
+        elif key_data:
+            self.private_key, self.public_key = self.import_keypair(key_data)
             self.rng_secret = None
             self.verify_keypair()
         else:
@@ -131,11 +131,7 @@ class Keypair:
         # Derive pubkey from private key in the usual way..
         public_key = self.rebuild_pubkey(private_key)
         if preserve_secrets:
-            #secret_seeds = [self._bin_b64str(i) for i in secret_seeds]
-            print(secret_seeds)
             secret_seeds = self._bin_b64str(secret_seeds[0]+secret_seeds[1])
-            print(secret_seeds)
-            print(self.import_seed(secret_seeds))
             return private_key, public_key, secret_seeds
         else:
             del(secret_seeds)
@@ -391,10 +387,10 @@ def test_action(*args,**kwargs):
     myseckey = mykp.export_private_key()
     print("Testing secret key import..")
     del(mykp)
-    mykp = Keypair(keypair=myseckey)
+    mykp = Keypair(key_data=myseckey)
     print("Initialising Signer and Verifier..")
     mysigner = Signer(mykp)
-    myverifier = Verifier(Keypair(keypair=mypubkey))
+    myverifier = Verifier(Keypair(key_data=mypubkey))
     print("Generating Authentic Signature for message:\r\n\t{0}".format(mymsg))
     mysig = mysigner.generate_signature(mymsg)
     print("Attempting to Verify Signature...Result:", myverifier.verify_signature(mymsg, mysig))
