@@ -45,6 +45,7 @@ class Keypair:
         This is much slower and is more likely to cause blockage of RNGs that
         cannot produce enough random output to satisfy the lamport object's needs.'''
         if private_seed:
+            private_seed = self.import_seed(private_seed)
             self.private_key, self.public_key, self.rng_secret = self.generate_hash_chain_keypair(private_seed)
         elif keypair:
             self.private_key, self.public_key = self.import_keypair(keypair)
@@ -102,14 +103,15 @@ class Keypair:
         key from the seed in future, to allow for far smaller private keys.
         This method is nearly ten times faster than using raw RNG output.
         '''
-        if not secret_seeds:
+        if secret_seeds:
+            # Assume that secret seeds are provided as a list of
+            # b64 encoded strings and decode accordingly.
+#            secret_seeds = [self._b64str_bin(i) for i in secret_seeds]
+            pass
+        else:
             # Generate a pair of large seeds for use in generating
             # the private key hash-chain.
             secret_seeds = [RNG(1024), RNG(1024)]
-        else:
-            # Assume that secret seeds are provided as a list of
-            # b64 encoded strings and decode accordingly.
-            secret_seeds = [self._b64str_bin(i) for i in secret_seeds]
         private_key = []
         prior_hashes = [sha512(i).digest() for i in secret_seeds]
         for i in range(0,512):
@@ -129,11 +131,21 @@ class Keypair:
         # Derive pubkey from private key in the usual way..
         public_key = self.rebuild_pubkey(private_key)
         if preserve_secrets:
-            secret_seeds = [self._bin_b64str(i) for i in secret_seeds]
+            #secret_seeds = [self._bin_b64str(i) for i in secret_seeds]
+            print(secret_seeds)
+            secret_seeds = self._bin_b64str(secret_seeds[0]+secret_seeds[1])
+            print(secret_seeds)
+            print(self.import_seed(secret_seeds))
             return private_key, public_key, secret_seeds
         else:
             del(secret_seeds)
             return private_key, public_key, None
+
+    def import_seed(self, seed_str):
+        seed_bytes = self._b64str_bin(seed_str)
+        seed_len = int(len(seed_bytes)/2)
+        seeds = [seed_bytes[:seed_len],seed_bytes[seed_len:]]
+        return seeds
 
     def rebuild_pubkey(self, privkey=None):
         if not privkey: privkey = self.private_key
@@ -170,11 +182,7 @@ class Keypair:
         return {"Private Seed":self.rng_secret, "Leaf Hash":self.tree_node_hash(b64=True)}
 
     def export_keypair(self):
-        exportable_publickey = self._exportable_key(self.public_key)
-        exportable_privatekey = self._exportable_key(self.private_key)
-        b64keypair = {'pub':exportable_publickey,
-                      'sec':exportable_privatekey}
-        return json.dumps(b64keypair)
+        return self.export_key_seed()["Private Seed"]
 
     def export_public_key(self):
         return json.dumps({'pub':self._exportable_key(self.public_key)})
@@ -359,7 +367,14 @@ def verify_action(*args, **kwargs):
     pass
 
 def generate_action(*args, **kwargs):
-    pass
+    "Expects 'publickey' and 'privatekey' args (filenames to save to)."
+    new_key = Keypair()
+    private_key = new_key.export_key_seed()
+    public_key = new_key.export_public_key()
+    with open(kwargs['privatekey'], mode='w') as OutFile:
+        OutFile.write(private_key['Private Seed'])
+    with open(kwargs['publickey'], mode='w') as OutFile:
+        OutFile.write(public_key)
 
 def test_action(*args,**kwargs):
     mymsg = "This is a secret message!"
@@ -376,11 +391,11 @@ def test_action(*args,**kwargs):
     myseckey = mykp.export_private_key()
     print("Testing secret key import..")
     del(mykp)
-    mykp = Keypair(myseckey)
+    mykp = Keypair(keypair=myseckey)
     print("Initialising Signer and Verifier..")
     mysigner = Signer(mykp)
-    myverifier = Verifier(Keypair(mypubkey))
-    print("Generating Authentic Signature for message:\r\n\t'{0}'".format(mymsg))
+    myverifier = Verifier(Keypair(keypair=mypubkey))
+    print("Generating Authentic Signature for message:\r\n\t{0}".format(mymsg))
     mysig = mysigner.generate_signature(mymsg)
     print("Attempting to Verify Signature...Result:", myverifier.verify_signature(mymsg, mysig))
     falsemsg = mymsg+" I grant Cathal unlimited right of attourney!"
@@ -407,6 +422,8 @@ if __name__ == "__main__":
     # First up: Generate a lamport keypair for later use with "sign" or "verify".
     KeygenParser = Parsers.add_parser("generate", help="Generate a Lamport keypair.")
     KeygenParser.set_defaults(action_function = generate_action)
+    KeygenParser.add_argument("privatekey", help="Filename to save the private key as.")
+    KeygenParser.add_argument("publickey", help="Filename to save the public key as.")
 
     # Use a specified Lamport key to sign a file or message.
     SignParser = Parsers.add_parser('sign', help="Sign a message or file.")
@@ -420,5 +437,6 @@ if __name__ == "__main__":
     TestParser = Parsers.add_parser("test", help="Run some tests to verify the script. Mainly used for development.")
     TestParser.set_defaults(action_function = test_action)
 
-    Args = MainParser.parse_args()
-    Args.action_function(Args)
+    Args = vars(MainParser.parse_args())
+    # Pass the argument namespace to its "action_function" function, as specified above.
+    Args['action_function'](**Args)
