@@ -536,10 +536,14 @@ if __name__ == "__main__":
     # Use a specified Lamport key to sign a file or message.
     SignParser = Parsers.add_parser('sign', help="Sign a message or file.")
     SignParser.set_defaults(action_function = sign_action)
+    SignParser.add_argument("privatekey", help="Filename of private key to use.")
+    SignParser.add_argument("-o", "--output-file", help="Save output to this filename instead of printing to console.")
+    #SignParser.add_argument("-a", "--ascii-armour", help="Save output as internet/print-friendly ascii.")
 
     # Use a Lamport public key to verify a signature against a file or message.
     VerifyParser = Parsers.add_parser("verify", help="Verify a signature against message or file.")
     VerifyParser.set_defaults(action_function = verify_action)
+    VerifyParser.add_argument("pubkey", help="Filename of public key to use.")
     
     # Run tests on the script; mainly used for development.
     TestParser = Parsers.add_parser("test", help="Run some tests to verify the script. Mainly used for development.")
