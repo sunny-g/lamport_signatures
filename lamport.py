@@ -18,18 +18,18 @@ from hashlib import sha512
 # TODO: Put this in its own script.
 try:
     # Introduced in Python 3.3 standard library: wraps OpenSSL/libssl
-    from ssl import RAND_bytes as RNG
+    from ssl import RAND_bytes as gRNG
     debug_ln("Using ssl module for Random Number Generation.")
 except ImportError:
     try:
         # Failing that, if PyCrypto is installed, can use that:
         from Crypto import Random
         _RNG = Random.new()
-        RNG = _RNG.read
+        gRNG = _RNG.read
         debug_ln("Using PyCrypto module for Random Number Generation.")
     except ImportError:
         import fallback_RNG
-        RNG = fallback_RNG.new()
+        gRNG = fallback_RNG.new()
         if os.name == "nt":
             winwarning = " On Windows, security workarounds borrowed from PyCrypto have been applied to try and ensure security on a terrible platform. Consider upgrading to Linux or BSD, or installing PyCrypto."
         else:
@@ -37,7 +37,30 @@ except ImportError:
         print("Python Version is less than 3.3, and PyCrypto is not installed. Will use os.urandom for random bytes when generating keys."+winwarning)
 
 class Keypair:
-    def __init__(self, private_seed=None, key_data=None, all_RNG=False, debug=False):
+    # "staticmethod" decorator creates methods that do not require "self"
+    # as first argument. This offers marginal performance gains, but means
+    # that these methods cannot make use of other methods or change object
+    # state. Consider them to be basic functions bound to the object.
+    @staticmethod
+    def _bin_b64str(binary_stuff):
+        'Shorthand: Converts bytes into b64-encoded strings.'
+        return str(base64.b64encode(binary_stuff), 'utf-8')
+    @staticmethod
+    def _b64str_bin(b64_encoded_stuff):
+        'Shorthand: Restores bytes data from b64-encoded strings.'
+        return base64.b64decode(bytes(b64_encoded_stuff, 'utf-8'))
+    @staticmethod
+    def string_digest(string, digestsize):
+        "Yield successive digestsize-sized chunks from string."
+        for i in range(0, len(string), digestsize):
+            yield string[i:i+digestsize]
+    @staticmethod
+    def _bin_list_peek(list_of_bytes, n=10):
+        'Returns the first n bytes of every list item as b64 strings in a list.'
+        # Useful for getting readable debug output.
+        return [str(base64.b64encode(x[:n]),'utf-8') for x in list_of_bytes]
+
+    def __init__(self, private_seed=None, key_data=None, pubkey_block=None, RNG=None, all_RNG=False, debug=False):
         '''Can be given a keypair to import and use, or generates one automatically.
         Default is to create a private keypair using hash-chaining (fast)
         If all_RNG is set to True (or any other value that evals True),
@@ -48,10 +71,21 @@ class Keypair:
         if private_seed:
             private_seed = self.import_seed(private_seed)
             self.private_key, self.public_key, self.rng_secret = self.generate_hash_chain_keypair(private_seed)
+        elif pubkey_block:
+            self.public_key = self._deblockify_pubkey(pubkey_block)
+            self.private_key = None
         elif key_data:
             self.private_key, self.public_key = self.import_keypair(key_data)
             self.rng_secret = None
         else:
+            if not RNG:
+                raise TypeError("A random-number generator function must be provided "+\
+                            "as argument 'RNG' in order to create a new key. This must "+\
+                            "be readable by direct call with an integer value, i.e. RNG(64), "+\
+                            "and must return that number of bytes. If using RNGs that present "+\
+                            "a file-like interface (i.e. RNG.read(64)), as for e.g. PyCrypto, "+\
+                            "then pass the RNG.read method: Keypair(RNG=myRNG.read)")
+            self.RNG = RNG
             if all_RNG:
                 self.private_key, self.public_key = self.generate_raw_random_keypair()
                 self.rng_secret = None
@@ -60,50 +94,6 @@ class Keypair:
                 self.private_key, self.public_key, self.rng_secret = self.generate_hash_chain_keypair(preserve_secrets=True)
         # Runs some sanity checks on key data.
         self.verify_keypair()
-
-    # N00b note: @staticmethod removes need to have "self" as method
-    # first argument, and offers very marginal performance increase.
-    # This means, of course, that these methods cannot alter the state
-    # of the object, as they have not been passed the object/instance.
-    @staticmethod
-    def _bin_b64str(binary_stuff):
-        'Utility method for converting bytes into b64-encoded strings.'
-        return str(base64.b64encode(binary_stuff), 'utf-8')
-
-    @staticmethod
-    def _b64str_bin(b64_encoded_stuff):
-        'Restores bytes data from b64-encoded strings.'
-        return base64.b64decode(bytes(b64_encoded_stuff, 'utf-8'))
-
-    @staticmethod
-    def string_digest(string, digestsize):
-        "Yield successive digestsize-sized chunks from string."
-        for i in range(0, len(string), digestsize):
-            yield string[i:i+digestsize]
-
-    @staticmethod
-    def _bin_list_peek(list_of_bytes, n=10):
-        'Returns the first n bytes of every list item as b64 strings in a list.'
-        # Useful for debugging, where looking at whole values or raw binary
-        # would be cumbersome and difficult to compare against.
-        return [str(base64.b64encode(x[:n]),'utf-8') for x in list_of_bytes]
-
-    def generate_raw_random_keypair(self):
-        '''Generates one sha512 lamport keypair for this object.
-        Returns private key (list of lists), public key (list of lists).
-        It is recommended to use generate_hash_chain_keypair instead, as
-        it is far faster and less likely to block the RNG.'''
-        private_key = []
-        public_key = []
-        for i in range(0,512):
-            # Creates a pair of 512-bit numbers
-            private_unit = [RNG(64), RNG(64)]
-            # Creates a pair of 512-bit digests from the above
-            public_unit = [sha512(j).digest() for j in private_unit]
-            # Adds the numbers and hashes to the end of the growing keys
-            private_key.append(private_unit)
-            public_key.append(public_unit)
-        return private_key, public_key
 
     def generate_hash_chain_keypair(self, secret_seeds=None, preserve_secrets=False):
         '''Saves on CSPRNG output by using a secret seed to generate
@@ -124,7 +114,7 @@ class Keypair:
         else:
             # Generate a pair of large seeds for use in generating
             # the private key hash-chain.
-            secret_seeds = [RNG(1024), RNG(1024)]
+            secret_seeds = [self.RNG(1024), self.RNG(1024)]
         # Debug only, to verify that secrets are different and consistent:
         private_key = []
         prior_hashes = [sha512(i).digest() for i in secret_seeds]
@@ -148,7 +138,7 @@ class Keypair:
             # Add the two new secret-salted hash-chain hashes to key list
             private_key.append(append_hashes)
         # Derive pubkey from private key in the usual way..
-        public_key = self.rebuild_pubkey(private_key)
+        public_key = self.build_pubkey(private_key)
         # Debug only:
         if self.debug:
             print("Seed value headers:",self._bin_list_peek(secret_seeds))
@@ -165,13 +155,27 @@ class Keypair:
             del(secret_seeds)
             return private_key, public_key, None
 
+    def export_key_seed(self):
+        '''Returns a dictionary with RNG seeds and merkle-tree hash.
+        This is intended for minimised merkle trees, where seeds can be
+        indexed by node hash and used to re-derive the lamport keypair
+        as-needed. This minimises the space needed to store the Merkle
+        tree in full, and reduces encryption/decryption time for
+        passphrase-protected Merkle trees.
+        '''
+        if not self.rng_secret:
+            raise AttributeError("This keypair object does not have the"+\
+                      " required 'rng_secret' attribute; perhaps it was"+\
+                      " imported from a raw keypair rather than a secret seed?")
+        return self.rng_secret
+
     def import_seed(self, seed_str):
         seed_bytes = self._b64str_bin(seed_str)
         seed_len = int(len(seed_bytes)/2)
         seeds = [seed_bytes[:seed_len],seed_bytes[seed_len:]]
         return seeds
 
-    def rebuild_pubkey(self, privkey=None):
+    def build_pubkey(self, privkey=None):
         'Takes a list of value-pairs (lists or tuples), returns hash-pairs.'
         if not privkey: privkey = self.private_key
         def hashpair(pair):
@@ -192,50 +196,12 @@ class Keypair:
             merkle_node_hash = self._bin_b64str(merkle_node_hash)
         return merkle_node_hash
 
-    # n00b note: the "@property" decorator means that the following
-    # method can be called without brackets or arguments. In otherwords,
-    # a key's hash can be obtained using my_key.pubkey_hash - as if it
-    # were a static property.
-    @property
-    def pubkey_hash(self):
-        'Returns the base-64 encoded pubkey hash.'
-        return self.tree_node_hash(True)
-
-    def export_key_seed(self):
-        '''Returns a dictionary with RNG seeds and merkle-tree hash.
-        This is intended for minimised merkle trees, where seeds can be
-        indexed by node hash and used to re-derive the lamport keypair
-        as-needed. This minimises the space needed to store the Merkle
-        tree in full, and reduces encryption/decryption time for
-        passphrase-protected Merkle trees.
-        '''
-        if not self.rng_secret:
-            raise AttributeError("This keypair object does not have the"+\
-                      " required 'rng_secret' attribute; perhaps it was"+\
-                      " imported from a raw keypair rather than a secret seed?")
-        return {"Private Seed":self.rng_secret, "Leaf Hash":self.tree_node_hash(b64=True)}
-
     def export_keypair(self):
-        return self.export_key_seed()["Private Seed"]
-
-    def export_public_key(self):
-        return json.dumps({'pub':self._exportable_key(self.public_key)})
-
-    def export_private_key(self):
-        return json.dumps({'sec':self._exportable_key(self.private_key)})
-
-    def _exportable_key(self, key=None):
-        if key is None:
-            key= self.public_key
-        export_key = []
-        for unit in key:
-            unit0 = self._bin_b64str(unit[0])
-            unit1 = self._bin_b64str(unit[1])
-            export_key.append([unit0, unit1])
-        return export_key
+        return self.export_key_seed()
 
     def _blockify_pubkey(self):
         'Flattens pubkey into a concatenated string of 88-char b64-encoded units.'
+        # "Public" use is by the "pubkey" property, defined below.
         export_key = self._exportable_key()
         flat_key = []
         for unit in export_key:
@@ -243,16 +209,13 @@ class Keypair:
         flat_key = ''.join(flat_key)
         return flat_key
 
-    @property
-    def pubkey(self):
-        return self._blockify_pubkey()
-
     def _deblockify_pubkey(self, concat_pubkey):
         'Decodes a concatenated pubkey string into pubkey hash-pair list.'
+        # "Public" use is by passing "pubkey_block" argument to __init__.
         raw_hashlist = []
         # For 512-bit digests like sha512, the raw digest size in bytes
         # is 64 bytes. But in base-64 encoding, it's 88 characters.
-        for chopped_hash in self.string_digest(foo, 88):
+        for chopped_hash in self.string_digest(concat_pubkey, 88):
             raw_hashlist.append(self._b64str_bin(chopped_hash))
         # "zip" is a builtin that runs through two or more iterables
         # and returns tuples of all the outputs. So, it's a convenient
@@ -261,27 +224,6 @@ class Keypair:
         # ..but we want lists, not tuples. Just in case it leads to bugs.
         hashpairs = [list(x) for x in hashpairs]
         return hashpairs
-
-    def import_keypair(self, keypair):
-        def parse_key(key):
-            key_bin = []
-            for unit_pair in key:
-                unit0 = self._b64str_bin(unit_pair[0])
-                unit1 = self._b64str_bin(unit_pair[1])
-                key_bin.append([unit0, unit1])
-            return key_bin
-        if isinstance(keypair, str):
-            keypair = json.loads(keypair)
-        elif not isinstance(keypair, dict):
-            raise TypeError("Only json-formatted strings or native dicts are supported for key import.")
-        available_keys = keypair.keys()
-        if 'sec' in available_keys and 'pub' in available_keys:
-            return parse_key(keypair['sec']), parse_key(keypair['pub'])
-        elif 'sec' in available_keys:
-            privkey = parse_key(keypair['sec'])
-            return privkey, self.rebuild_pubkey(privkey)
-        elif 'pub' in available_keys:
-            return None, parse_key(keypair['pub'])
 
     def verify_keypair(self):
         def check_key(key):
@@ -314,10 +256,84 @@ class Keypair:
             if self.public_key:
                 check_key(self.public_key)
             else:
-                self.public_key = self.rebuild_pubkey()
+                self.public_key = self.build_pubkey()
             if self.debug:
                 print("Private key found. Can sign and verify self-signed messages.")
             return True
+
+    # n00b note: the "@property" decorator means that the following
+    # methods can be called without brackets or arguments. In other words,
+    # a key's hash can be obtained using my_key.pubkey_hash - as if it
+    # were a static property.
+    @property
+    def pubkey_hash(self):
+        'Returns the base-64 encoded pubkey hash.'
+        return self.tree_node_hash(True)
+
+    @property
+    def pubkey(self):
+        return self._blockify_pubkey()
+
+    # =================================================================
+    # Methods after here are largely deprecated but retained in case of
+    # later need. i.e., generating raw RNG keypairs may prove necessary
+    # for security, so we'll keep that working method intact, for now.
+    # =================================================================
+    
+    def generate_raw_random_keypair(self):
+        '''Generates one sha512 lamport keypair for this object.
+        Returns private key (list of lists), public key (list of lists).
+        It is recommended to use generate_hash_chain_keypair instead, as
+        it is far faster and less likely to block the RNG.'''
+        private_key = []
+        public_key = []
+        for i in range(0,512):
+            # Creates a pair of 512-bit numbers
+            private_unit = [RNG(64), RNG(64)]
+            # Creates a pair of 512-bit digests from the above
+            public_unit = [sha512(j).digest() for j in private_unit]
+            # Adds the numbers and hashes to the end of the growing keys
+            private_key.append(private_unit)
+            public_key.append(public_unit)
+        return private_key, public_key
+
+    def export_public_key(self):
+        return json.dumps({'pub':self._exportable_key(self.public_key)})
+
+    def export_private_key(self):
+        return json.dumps({'sec':self._exportable_key(self.private_key)})
+
+    def _exportable_key(self, key=None):
+        if key is None:
+            key= self.public_key
+        export_key = []
+        for unit in key:
+            unit0 = self._bin_b64str(unit[0])
+            unit1 = self._bin_b64str(unit[1])
+            export_key.append([unit0, unit1])
+        return export_key
+
+    def import_keypair(self, keypair):
+        def parse_key(key):
+            key_bin = []
+            for unit_pair in key:
+                unit0 = self._b64str_bin(unit_pair[0])
+                unit1 = self._b64str_bin(unit_pair[1])
+                key_bin.append([unit0, unit1])
+            return key_bin
+        if isinstance(keypair, str):
+            keypair = json.loads(keypair)
+        elif not isinstance(keypair, dict):
+            raise TypeError("Only json-formatted strings or native dicts are supported for key import.")
+        available_keys = keypair.keys()
+        if 'sec' in available_keys and 'pub' in available_keys:
+            return parse_key(keypair['sec']), parse_key(keypair['pub'])
+        elif 'sec' in available_keys:
+            privkey = parse_key(keypair['sec'])
+            return privkey, self.build_pubkey(privkey)
+        elif 'pub' in available_keys:
+            return None, parse_key(keypair['pub'])
+
 
 class KeyWrapper:
     def __init__(self, keypair):
@@ -448,7 +464,7 @@ def generate_action(*args, **kwargs):
 def test_action(*args,**kwargs):
     mymsg = "This is a secret message!"
     print("Generating Lamport Keypair..")
-    mykp = Keypair()
+    mykp = Keypair(RNG=gRNG)
     print("Generating Pubkey..")
     mypubkey = mykp.export_public_key()
 
@@ -467,6 +483,12 @@ def test_action(*args,**kwargs):
     print("Testing secret key import..")
     del(mykp)
     mykp = Keypair(key_data=myseckey)
+
+    print("Testing public key block export..")
+    mypubkey_block = mykp.pubkey
+    print("Attempting to create a pubkey-only key from pubkey block..")
+    mypubkey_obj = Keypair(pubkey_block=mypubkey_block)
+    print("Key object derived from pubkey block has same hash as full key:", mypubkey_obj.pubkey_hash == mykp.pubkey_hash)
 
     print("Initialising Signer and Verifier..")
     mysigner = Signer(mykp)

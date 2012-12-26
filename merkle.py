@@ -82,7 +82,7 @@ class MerkleTree:
             newkey = lamport.Keypair()
             key_seed = newkey.export_key_seed()
             # key_seed contains "Private Seed", "Leaf Hash": both b64 str
-            self.private_keyring.append(key_seed['Private Seed'])
+            self.private_keyring.append(key_seed)
             self.public_keyring.append(newkey.pubkey_hash)
             self.hash_tree[0].append(newkey.tree_node_hash())
 
