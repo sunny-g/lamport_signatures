@@ -37,20 +37,20 @@ except ImportError:
         print("Python Version is less than 3.3, and PyCrypto is not installed. Will use os.urandom for random bytes when generating keys."+winwarning)
 
 class Keypair:
-    def __init__(self, private_seed=None, key_data=None, all_RNG=False):
+    def __init__(self, private_seed=None, key_data=None, all_RNG=False, debug=False):
         '''Can be given a keypair to import and use, or generates one automatically.
         Default is to create a private keypair using hash-chaining (fast)
         If all_RNG is set to True (or any other value that evals True),
         private keys are instead built using raw RNG output.
         This is much slower and is more likely to cause blockage of RNGs that
         cannot produce enough random output to satisfy the lamport object's needs.'''
+        self.debug = debug
         if private_seed:
             private_seed = self.import_seed(private_seed)
             self.private_key, self.public_key, self.rng_secret = self.generate_hash_chain_keypair(private_seed)
         elif key_data:
             self.private_key, self.public_key = self.import_keypair(key_data)
             self.rng_secret = None
-            self.verify_keypair()
         else:
             if all_RNG:
                 self.private_key, self.public_key = self.generate_raw_random_keypair()
@@ -58,6 +58,8 @@ class Keypair:
             else:
                 # Default behaviour without arguments.
                 self.private_key, self.public_key, self.rng_secret = self.generate_hash_chain_keypair(preserve_secrets=True)
+        # Runs some sanity checks on key data.
+        self.verify_keypair()
 
     # N00b note: @staticmethod removes need to have "self" as method
     # first argument, and offers very marginal performance increase.
@@ -78,6 +80,13 @@ class Keypair:
         "Yield successive digestsize-sized chunks from string."
         for i in range(0, len(string), digestsize):
             yield string[i:i+digestsize]
+
+    @staticmethod
+    def _bin_list_peek(list_of_bytes, n=10):
+        'Returns the first n bytes of every list item as b64 strings in a list.'
+        # Useful for debugging, where looking at whole values or raw binary
+        # would be cumbersome and difficult to compare against.
+        return [str(base64.b64encode(x[:n]),'utf-8') for x in list_of_bytes]
 
     def generate_raw_random_keypair(self):
         '''Generates one sha512 lamport keypair for this object.
@@ -110,14 +119,13 @@ class Keypair:
         This method is nearly ten times faster than using raw RNG output.
         '''
         if secret_seeds:
-            # Assume that secret seeds are provided as a list of
-            # b64 encoded strings and decode accordingly.
-#            secret_seeds = [self._b64str_bin(i) for i in secret_seeds]
+            # TODO Sanity check secret seeds.
             pass
         else:
             # Generate a pair of large seeds for use in generating
             # the private key hash-chain.
             secret_seeds = [RNG(1024), RNG(1024)]
+        # Debug only, to verify that secrets are different and consistent:
         private_key = []
         prior_hashes = [sha512(i).digest() for i in secret_seeds]
         for i in range(0,512):
@@ -126,16 +134,28 @@ class Keypair:
             # Make room for the digests to be added to private_key
             append_hashes = []
             for i in range(0,2):
-                # Fill hash buffer with the previous hash digest for
-                # this position
+                # Add prior hash for this position to new hash object:
                 new_hashes[i].update(prior_hashes[i])
+                # "Salt" the new hash with the secret seed for this position:
                 new_hashes[i].update(secret_seeds[i])
+                # Digest hash..
                 i_digest = new_hashes[i].digest()
+                # Replace the (now used) prior hash with a new "prior hash"
                 prior_hashes[i] = i_digest
+                # Append the new digest to the append_hashes list: this
+                # will contain two hashes after this for-loop.
                 append_hashes.append(i_digest)
+            # Add the two new secret-salted hash-chain hashes to key list
             private_key.append(append_hashes)
         # Derive pubkey from private key in the usual way..
         public_key = self.rebuild_pubkey(private_key)
+        # Debug only:
+        if self.debug:
+            print("Seed value headers:",self._bin_list_peek(secret_seeds))
+            print("First 5 private key '0' values:",self._bin_list_peek([x[0] for x in private_key[:5]], 8))
+            print("First 5 private key '1' values:",self._bin_list_peek([x[1] for x in private_key[:5]], 8))
+            print("First 5 public key '0' values:",self._bin_list_peek([x[0] for x in public_key[:5]], 8))
+            print("First 5 public key '1' values:",self._bin_list_peek([x[1] for x in public_key[:5]], 8))
         if preserve_secrets:
             secret_seeds = self._bin_b64str(secret_seeds[0]+secret_seeds[1])
             return private_key, public_key, secret_seeds
@@ -152,6 +172,7 @@ class Keypair:
         return seeds
 
     def rebuild_pubkey(self, privkey=None):
+        'Takes a list of value-pairs (lists or tuples), returns hash-pairs.'
         if not privkey: privkey = self.private_key
         def hashpair(pair):
             return [sha512(pair[0]).digest(), sha512(pair[1]).digest()]
@@ -209,7 +230,7 @@ class Keypair:
         export_key = []
         for unit in key:
             unit0 = self._bin_b64str(unit[0])
-            unit1 = self._bin_b64str(unit[0])
+            unit1 = self._bin_b64str(unit[1])
             export_key.append([unit0, unit1])
         return export_key
 
@@ -243,12 +264,12 @@ class Keypair:
 
     def import_keypair(self, keypair):
         def parse_key(key):
-            key_in = []
+            key_bin = []
             for unit_pair in key:
-                unit0 = base64.b64decode(bytes(unit_pair[0],'utf-8'))
-                unit1 = base64.b64decode(bytes(unit_pair[1],'utf-8'))
-                key_in.append([unit0, unit1])
-            return key_in
+                unit0 = self._b64str_bin(unit_pair[0])
+                unit1 = self._b64str_bin(unit_pair[1])
+                key_bin.append([unit0, unit1])
+            return key_bin
         if isinstance(keypair, str):
             keypair = json.loads(keypair)
         elif not isinstance(keypair, dict):
@@ -285,7 +306,8 @@ class Keypair:
                 raise TypeError("No keypair found!")
             else:
                 check_key(self.public_key)
-                debug_ln("Only pubkey found. Can verify; cannot sign.")
+                if self.debug:
+                    print("Only pubkey found. Can verify; cannot sign.")
                 return True
         else:
             check_key(self.private_key)
@@ -293,7 +315,8 @@ class Keypair:
                 check_key(self.public_key)
             else:
                 self.public_key = self.rebuild_pubkey()
-            debug_ln("Private key found. Can sign and verify self-signed messages.")
+            if self.debug:
+                print("Private key found. Can sign and verify self-signed messages.")
             return True
 
 class KeyWrapper:
@@ -358,12 +381,12 @@ class Verifier(KeyWrapper):
                    "and generation from private part (if available) "
                    "failed. Cannot be used to verify."))
 
-    def verify_signature(self, message, utf8sig, debug=False):
+    def verify_signature(self, message, utf8sig):
         '''Message and utf8sig should be strings. They will be byte-converted
         and passed to the verify_bin_signature method.'''
-        return self.verify_bin_signature(bytes(message,'utf-8'), self._parse_utf8_sig(utf8sig), debug)
+        return self.verify_bin_signature(bytes(message,'utf-8'), self._parse_utf8_sig(utf8sig))
 
-    def verify_bin_signature(self, message, binsig, debug=False):
+    def verify_bin_signature(self, message, binsig):
         '''This is the method responsible for actual verification of sigs.
 
         Message must be binary. Binsig must be a list of 512 64-byte values.
@@ -375,7 +398,7 @@ class Verifier(KeyWrapper):
         hashes in the pubkey, the sig is valid, and this returns True.
         Otherwise, this method returns False.'''
         bithash = self.bit_hash(self.hash_message(message))
-        if debug:
+        if self.keypair.debug:
             print("Bithash 1-30: ", ''.join([str(x) for x in bithash[:40]]))
             print("Counter", "Bit", "This Secret Num #", "Pubkey #", "Other Pubkey #", sep="\t")
         counter = 0
@@ -384,7 +407,7 @@ class Verifier(KeyWrapper):
             this_number_hash = sha512(binsig[counter]).digest()
             # In python compound evaluations short-circuit, so if debug
             # is false, counter < 10 isn't even evaluated.
-            if debug and counter < 10:
+            if self.keypair.debug and counter < 10:
                 # Get tib, the opposite of bit:
                 if bit: tib = 0
                 else: tib = 1
@@ -428,25 +451,35 @@ def test_action(*args,**kwargs):
     mykp = Keypair()
     print("Generating Pubkey..")
     mypubkey = mykp.export_public_key()
+
     print("Testing keypair export..")
     exp_mykp = mykp.export_keypair()
+    # This is the secret seed pair, exported as a single contiguous
+    # b64-encoded, utf-8 string.
     print("Testing keypair import..")
     del(mykp)
     mykp = Keypair(exp_mykp)
+
     print("Testing secret key export..")
     myseckey = mykp.export_private_key()
+    # This is the actual secret key, as derived from the secret seeds,
+    # as a utf-8 string JSON-exported list of b64-encoded value pair lists.
     print("Testing secret key import..")
     del(mykp)
     mykp = Keypair(key_data=myseckey)
+
     print("Initialising Signer and Verifier..")
     mysigner = Signer(mykp)
     myverifier = Verifier(Keypair(key_data=mypubkey))
+
     print("Generating Authentic Signature for message:\r\n\t{0}".format(mymsg))
     mysig = mysigner.generate_signature(mymsg)
-    print("Attempting to Verify Signature...Result:", myverifier.verify_signature(mymsg, mysig, True))    
+    print("Attempting to Verify Signature...Result:", myverifier.verify_signature(mymsg, mysig))
+
     falsemsg = mymsg+" I grant Cathal unlimited right of attourney!"
     print("Attempting to Verify a Falsified Signature for message:\r\n\t{0}".format(falsemsg))
-    print("Verification Result:",myverifier.verify_signature(falsemsg, mysig, True))
+    print("Verification Result:",myverifier.verify_signature(falsemsg, mysig))
+
     print("Finished!")
 
 if __name__ == "__main__":
