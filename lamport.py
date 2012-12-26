@@ -7,7 +7,6 @@ def debug_ln(debugstr):
     if global_debug:
         print(debugstr)
 
-# Todo: remove the PyCrypto RNG requirement: new SSL RNG in Standard Library?
 import sys
 import os
 import bitstring
@@ -16,6 +15,7 @@ import json
 from hashlib import sha512
 
 # Import a cryptographically secure random number generator.
+# TODO: Put this in its own script.
 try:
     # Introduced in Python 3.3 standard library: wraps OpenSSL/libssl
     from ssl import RAND_bytes as RNG
@@ -390,12 +390,9 @@ class Verifier(KeyWrapper):
         # NB: Should verify the general shape/format of the signature here.
         # Sig is a concatenation of 512 b64-encoded 64-byte numbers.
         # The length of such numbers is 88 when encoded.
-        def chunks(l, n):
-            "Generator: Yield successive n-sized chunks from l."
-            for i in range(0, len(l), n):
-                yield l[i:i+n]
+        # Keypairs already have a string-digesting staticmethod, so use that.
         binary_sig = base64.b64decode(bytes(utf8sig, 'utf-8'))
-        bin_sig_list = [x for x in chunks(binary_sig, 64)]
+        bin_sig_list = [x for x in self.keypair.string_digest(binary_sig, 64)]
         return bin_sig_list
 
 def sign_action(*args, **kwargs):
