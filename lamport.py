@@ -73,6 +73,12 @@ class Keypair:
         'Restores bytes data from b64-encoded strings.'
         return base64.b64decode(bytes(b64_encoded_stuff, 'utf-8'))
 
+    @staticmethod
+    def string_digest(string, digestsize):
+        "Yield successive digestsize-sized chunks from string."
+        for i in range(0, len(string), digestsize):
+            yield string[i:i+digestsize]
+
     def generate_raw_random_keypair(self):
         '''Generates one sha512 lamport keypair for this object.
         Returns private key (list of lists), public key (list of lists).
@@ -134,6 +140,8 @@ class Keypair:
             secret_seeds = self._bin_b64str(secret_seeds[0]+secret_seeds[1])
             return private_key, public_key, secret_seeds
         else:
+            # This might encourage the garbage collector to more proactively
+            # delete our secrets. Maybe.
             del(secret_seeds)
             return private_key, public_key, None
 
@@ -163,6 +171,15 @@ class Keypair:
             merkle_node_hash = self._bin_b64str(merkle_node_hash)
         return merkle_node_hash
 
+    # n00b note: the "@property" decorator means that the following
+    # method can be called without brackets or arguments. In otherwords,
+    # a key's hash can be obtained using my_key.pubkey_hash - as if it
+    # were a static property.
+    @property
+    def pubkey_hash(self):
+        'Returns the base-64 encoded pubkey hash.'
+        return self.tree_node_hash(True)
+
     def export_key_seed(self):
         '''Returns a dictionary with RNG seeds and merkle-tree hash.
         This is intended for minimised merkle trees, where seeds can be
@@ -191,10 +208,38 @@ class Keypair:
             key= self.public_key
         export_key = []
         for unit in key:
-            unit0 = str(base64.b64encode(unit[0]), 'utf-8')
-            unit1 = str(base64.b64encode(unit[1]), 'utf-8')
+            unit0 = self._bin_b64str(unit[0])
+            unit1 = self._bin_b64str(unit[0])
             export_key.append([unit0, unit1])
         return export_key
+
+    def _blockify_pubkey(self):
+        'Flattens pubkey into a concatenated string of 88-char b64-encoded units.'
+        export_key = self._exportable_key()
+        flat_key = []
+        for unit in export_key:
+            flat_key.append(''.join(unit))
+        flat_key = ''.join(flat_key)
+        return flat_key
+
+    @property
+    def pubkey(self):
+        return self._blockify_pubkey()
+
+    def _deblockify_pubkey(self, concat_pubkey):
+        'Decodes a concatenated pubkey string into pubkey hash-pair list.'
+        raw_hashlist = []
+        # For 512-bit digests like sha512, the raw digest size in bytes
+        # is 64 bytes. But in base-64 encoding, it's 88 characters.
+        for chopped_hash in self.string_digest(foo, 88):
+            raw_hashlist.append(self._b64str_bin(chopped_hash))
+        # "zip" is a builtin that runs through two or more iterables
+        # and returns tuples of all the outputs. So, it's a convenient
+        # way to do pairing of adjecent list items.
+        hashpairs = zip(raw_hashlist[::2], raw_hashlist[1::2])
+        # ..but we want lists, not tuples. Just in case it leads to bugs.
+        hashpairs = [list(x) for x in hashpairs]
+        return hashpairs
 
     def import_keypair(self, keypair):
         def parse_key(key):
@@ -354,6 +399,9 @@ class Verifier:
             raise TypeError(("message_hash must be a binary hash, "
                              "as returned by sha512.digest()"))
         hash_bits = bitstring.BitString(message_hash)
+        # TODO; This behaviour of converting to ints is deprecated
+        # and probably performance-costly. Remove and use native booleans
+        # as given by bitstring!
         return [int(x) for x in list(hash_bits.bin)]
 
 def sign_action(*args, **kwargs):
