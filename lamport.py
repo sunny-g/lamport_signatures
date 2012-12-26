@@ -294,7 +294,30 @@ class Keypair:
             debug_ln("Private key found. Can sign and verify self-signed messages.")
             return True
 
-class Signer:
+class KeyWrapper:
+    def __init__(self, keypair):
+        self.keypair = keypair
+        
+    def hash_message(self, message):
+        if not isinstance(message, bytes):
+            message = bytes(message,'utf-8')
+        return sha512(message).digest()
+
+    def bit_hash(self, message_hash):
+        'Returns a list of bools representing the bits of message_hash'
+        if not isinstance(message_hash, bytes):
+            raise TypeError(("message_hash must be a binary hash, "
+                             "as returned by sha512.digest()"))
+        hash_bits = bitstring.BitString(message_hash)
+        # There is a reason we're converting booleans (low-memory usage)
+        # to ints (probably higher memory usage): the values for each
+        # bit will be used as list indices for selecting which pubkey hash
+        # or private key number to use when signing and verifying.
+        # TODO: Run some comparisons and performance checks to see if
+        # it's faster to use booleans and if/else clauses instead.
+        return [int(x) for x in list(hash_bits.bin)]
+
+class Signer(KeyWrapper):
     def __init__(self, keypair):
         self.keypair = keypair
         if not self.keypair.private_key:
@@ -325,20 +348,7 @@ class Signer:
             counter += 1
         return Revealed_Numbers
 
-    def hash_message(self, message):
-        if not isinstance(message, bytes):
-            message = bytes(message,'utf-8')
-        return sha512(message).digest()
-
-    def bit_hash(self, message_hash):
-        'Returns a list of bools representing the bits of message_hash'
-        if not isinstance(message_hash, bytes):
-            raise TypeError(("message_hash must be a binary hash, "
-                             "as returned by sha512.digest()"))
-        hash_bits = bitstring.BitString(message_hash)
-        return [int(x) for x in list(hash_bits.bin)]
-
-class Verifier:
+class Verifier(KeyWrapper):
     def __init__(self, keypair):
         self.keypair = keypair
         if not self.keypair.public_key:
@@ -387,22 +397,6 @@ class Verifier:
         binary_sig = base64.b64decode(bytes(utf8sig, 'utf-8'))
         bin_sig_list = [x for x in chunks(binary_sig, 64)]
         return bin_sig_list
-
-    def hash_message(self, message):
-        if not isinstance(message, bytes):
-            message = bytes(message,'utf-8')
-        return sha512(message).digest()
-
-    def bit_hash(self, message_hash):
-        'Returns a list of bools representing the bits of message_hash'
-        if not isinstance(message_hash, bytes):
-            raise TypeError(("message_hash must be a binary hash, "
-                             "as returned by sha512.digest()"))
-        hash_bits = bitstring.BitString(message_hash)
-        # TODO; This behaviour of converting to ints is deprecated
-        # and probably performance-costly. Remove and use native booleans
-        # as given by bitstring!
-        return [int(x) for x in list(hash_bits.bin)]
 
 def sign_action(*args, **kwargs):
     pass
