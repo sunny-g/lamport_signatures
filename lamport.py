@@ -453,13 +453,19 @@ def verify_action(*args, **kwargs):
 
 def generate_action(*args, **kwargs):
     "Expects 'publickey' and 'privatekey' args (filenames to save to)."
-    new_key = Keypair()
+    new_key = Keypair(RNG=gRNG)
     private_key = new_key.export_key_seed()
-    public_key = new_key.export_public_key()
+    public_key = new_key.pubkey
     with open(kwargs['privatekey'], mode='w') as OutFile:
-        OutFile.write(private_key['Private Seed'])
+        OutFile.write(private_key)
+        OutFile.write("\r\n")
     with open(kwargs['publickey'], mode='w') as OutFile:
         OutFile.write(public_key)
+        OutFile.write("\r\n")
+    if kwargs['pubkey_hash']:
+        with open(kwargs['pubkey_hash'], mode='w') as OutFile:
+            OutFile.write(new_key.pubkey_hash)
+            OutFile.write("\r\n")
 
 def test_action(*args,**kwargs):
     mymsg = "This is a secret message!"
@@ -523,8 +529,9 @@ if __name__ == "__main__":
     # First up: Generate a lamport keypair for later use with "sign" or "verify".
     KeygenParser = Parsers.add_parser("generate", help="Generate a Lamport keypair.")
     KeygenParser.set_defaults(action_function = generate_action)
-    KeygenParser.add_argument("privatekey", help="Filename to save the private key as.")
-    KeygenParser.add_argument("publickey", help="Filename to save the public key as.")
+    KeygenParser.add_argument("privatekey", help="Filename to save the private key to.")
+    KeygenParser.add_argument("publickey", help="Filename to save the public key to.")
+    KeygenParser.add_argument("--pubkey-hash", help="Optional filename to save pubkey hash to.")
 
     # Use a specified Lamport key to sign a file or message.
     SignParser = Parsers.add_parser('sign', help="Sign a message or file.")
