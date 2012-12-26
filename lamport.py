@@ -273,6 +273,8 @@ class Keypair:
                     raise TypeError("Each hash or number pair in key must be a list.")
                 if len(num_pair) != 2:
                     raise ValueError("Each hash or number pair list must be two items in size.")
+                if num_pair[0] == num_pair[1]:
+                    raise ValueError("Number pairs in key must not be identical!")
                 if not (isinstance(num_pair[0], bytes) or isinstance(num_pair[1], bytes)):
                     raise TypeError("Hash or Number pairs must be 64-byte (512-bit) binary sequences.")
                 if len(num_pair[0]) != 64 or len(num_pair[1]) != 64:
@@ -356,12 +358,12 @@ class Verifier(KeyWrapper):
                    "and generation from private part (if available) "
                    "failed. Cannot be used to verify."))
 
-    def verify_signature(self, message, utf8sig):
+    def verify_signature(self, message, utf8sig, debug=False):
         '''Message and utf8sig should be strings. They will be byte-converted
         and passed to the verify_bin_signature method.'''
-        return self.verify_bin_signature(bytes(message,'utf-8'), self._parse_utf8_sig(utf8sig))
+        return self.verify_bin_signature(bytes(message,'utf-8'), self._parse_utf8_sig(utf8sig), debug)
 
-    def verify_bin_signature(self, message, binsig):
+    def verify_bin_signature(self, message, binsig, debug=False):
         '''This is the method responsible for actual verification of sigs.
 
         Message must be binary. Binsig must be a list of 512 64-byte values.
@@ -373,11 +375,20 @@ class Verifier(KeyWrapper):
         hashes in the pubkey, the sig is valid, and this returns True.
         Otherwise, this method returns False.'''
         bithash = self.bit_hash(self.hash_message(message))
+        if debug:
+            print("Bithash 1-30: ", ''.join([str(x) for x in bithash[:40]]))
+            print("Counter", "Bit", "This Secret Num #", "Pubkey #", "Other Pubkey #", sep="\t")
         counter = 0
         for bit in bithash:
             public_hashes_for_bit = self.keypair.public_key[counter]
             this_number_hash = sha512(binsig[counter]).digest()
-            # Below: int(bit) returns 1 or 0 according to bool value.
+            # In python compound evaluations short-circuit, so if debug
+            # is false, counter < 10 isn't even evaluated.
+            if debug and counter < 10:
+                # Get tib, the opposite of bit:
+                if bit: tib = 0
+                else: tib = 1
+                print(counter, bit, base64.b64encode(this_number_hash[:10]), base64.b64encode(public_hashes_for_bit[bit][:10]), base64.b64encode(public_hashes_for_bit[tib][:10]), sep="\t")
             if this_number_hash != public_hashes_for_bit[bit]:
                 # Hash mismatch, signature false.
                 return False
@@ -432,10 +443,10 @@ def test_action(*args,**kwargs):
     myverifier = Verifier(Keypair(key_data=mypubkey))
     print("Generating Authentic Signature for message:\r\n\t{0}".format(mymsg))
     mysig = mysigner.generate_signature(mymsg)
-    print("Attempting to Verify Signature...Result:", myverifier.verify_signature(mymsg, mysig))
+    print("Attempting to Verify Signature...Result:", myverifier.verify_signature(mymsg, mysig, True))    
     falsemsg = mymsg+" I grant Cathal unlimited right of attourney!"
     print("Attempting to Verify a Falsified Signature for message:\r\n\t{0}".format(falsemsg))
-    print("Verification Result:",myverifier.verify_signature(falsemsg, mysig))
+    print("Verification Result:",myverifier.verify_signature(falsemsg, mysig, True))
     print("Finished!")
 
 if __name__ == "__main__":
